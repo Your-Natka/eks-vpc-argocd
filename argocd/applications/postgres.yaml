@@ -8,7 +8,7 @@ spec:
 
   source:
     chart: postgresql
-    repoURL: https://charts.bitnami.com/bitnami
+    repoURL: https://repo.broadcom.com/bitnami-files
     targetRevision: "16.7.21"
     helm:
       values: |
