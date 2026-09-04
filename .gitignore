@@ -17,3 +17,6 @@ override.tf.json
 
 # Terraform lock file
 # НЕ ігноруємо .terraform.lock.hcl — його потрібно зберігати в Git
+
+__pycache__/
+*.pyc

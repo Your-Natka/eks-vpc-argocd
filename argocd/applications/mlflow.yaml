@@ -1,0 +1,70 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: mlflow
+  namespace: infra-tools
+spec:
+  project: default
+
+  source:
+    chart: mlflow
+    repoURL: https://charts.bitnami.com/bitnami
+    targetRevision: "5.1.17"
+    helm:
+      values: |
+        fullnameOverride: mlflow
+
+        tracking:
+          enabled: true
+
+        auth:
+          enabled: false
+
+        service:
+          type: ClusterIP
+          ports:
+            http: 5000
+
+        postgresql:
+          enabled: false
+
+        externalDatabase:
+          dialectDriver: "postgresql"
+          host: postgres
+          port: 5432
+          user: mlflow
+          password: mlflow123
+          database: mlflow
+
+        minio:
+          enabled: false
+
+        externalS3:
+          host: minio
+          port: 9000
+          useCredentialsInSecret: false
+          accessKeyID: minioadmin
+          accessKeySecret: minioadmin123
+          protocol: "http"
+          bucket: mlflow-artifacts
+          serveArtifacts: true
+
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: mlflow
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+    syncOptions:
+      - CreateNamespace=true
