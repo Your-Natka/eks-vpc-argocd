@@ -13,6 +13,10 @@ spec:
 
     helm:
       values: |
+        global:
+          security:
+            allowInsecureImages: true
+
         fullnameOverride: postgres
 
         image:
