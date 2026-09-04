@@ -7,32 +7,32 @@ spec:
   project: default
 
   source:
-  repoURL: https://github.com/Your-Natka/eks-vpc-argocd.git
-  targetRevision: lesson-9
-  path: argocd/charts/postgresql
+    repoURL: https://github.com/Your-Natka/eks-vpc-argocd.git
+    targetRevision: lesson-9
+    path: argocd/charts/postgresql
 
-  helm:
-    values: |
-      fullnameOverride: postgres
+    helm:
+      values: |
+        fullnameOverride: postgres
 
-      auth:
-        postgresPassword: postgres123
-        username: mlflow
-        password: mlflow123
-        database: mlflow
+        auth:
+          postgresPassword: postgres123
+          username: mlflow
+          password: mlflow123
+          database: mlflow
 
-      primary:
-        persistence:
-          enabled: true
-          size: 5Gi
+        primary:
+          persistence:
+            enabled: true
+            size: 5Gi
 
-        resources:
-          requests:
-            cpu: 50m
-            memory: 128Mi
-          limits:
-            cpu: 200m
-            memory: 256Mi
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              cpu: 200m
+              memory: 256Mi
 
   destination:
     server: https://kubernetes.default.svc
