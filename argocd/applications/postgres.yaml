@@ -24,6 +24,7 @@ spec:
         primary:
           persistence:
             enabled: true
+            storageClass: gp2
             size: 5Gi
 
           resources:
