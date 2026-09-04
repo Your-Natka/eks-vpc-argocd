@@ -4,6 +4,9 @@
 *.tfstate.*
 crash.log
 crash.*.log
+.terraform/
+*.tfstate
+*.tfstate.*
 
 # Terraform variable files with possible secrets
 *.tfvars

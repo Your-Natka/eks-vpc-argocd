@@ -1,0 +1,68 @@
+global:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 10m
+      memory: 32Mi
+
+dex:
+  enabled: false
+
+server:
+  service:
+    type: ClusterIP
+
+  extraArgs:
+    - --insecure
+
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+controller:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+repoServer:
+  resources:
+    limits:
+      cpu: 200m
+      memory: 256Mi
+    requests:
+      cpu: 50m
+      memory: 128Mi
+
+applicationSet:
+  resources:
+    limits:
+      cpu: 100m
+      memory: 128Mi
+    requests:
+      cpu: 30m
+      memory: 64Mi
+
+configs:
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      g, admin, role:admin
+
+  params:
+    server.insecure: "true"
+    timeout.reconciliation: 30s
+    timeout.requeue.finished: 3s
+    timeout.requeue.error: 3s
+
+rbac:
+  create: true

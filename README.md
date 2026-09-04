@@ -1,861 +1,457 @@
-# MLOps Homework №2 — VPC та EKS через Terraform
+# Homework №3 — Argo CD Deployment via Terraform
 
-## Опис проєкту
+## Overview
 
-Цей проєкт демонструє автоматизоване створення базової AWS-інфраструктури для майбутніх ML/MLOps-сервісів за допомогою **Terraform**.
+This project demonstrates the deployment and configuration of **Argo CD** in an existing **AWS EKS cluster** using **Terraform** and the **Helm provider**.
 
-У межах завдання створюються:
+The EKS cluster was created previously and is reused in this homework. The current project focuses on deploying Argo CD and configuring GitOps-based application delivery.
 
-- AWS VPC;
-- public та private subnets;
-- NAT Gateway;
-- Internet Gateway;
-- Amazon EKS Kubernetes cluster;
-- окремі CPU та workload node groups;
-- workload isolation за допомогою Kubernetes labels та taints;
-- зв'язок між VPC та EKS через `terraform_remote_state`;
-- підключення до Kubernetes-кластера через `kubectl`.
+Argo CD is deployed into the `infra-tools` namespace and uses an **ApplicationSet** to automatically discover Kubernetes manifests from the GitOps repository.
 
-Інфраструктура розділена на дві незалежні Terraform-конфігурації:
+### Technologies
 
-- `vpc/` — мережева інфраструктура;
-- `eks/` — Kubernetes/EKS інфраструктура.
-
----
-
-## Технології
-
-- AWS
+- AWS EKS
 - Terraform
-- Amazon VPC
-- Amazon EKS
+- Helm
+- Argo CD
 - Kubernetes
-- kubectl
-- Terraform Remote State
-- Amazon S3 Backend
+- GitHub
+- GitOps
 
 ---
 
-## Структура проєкту
+## Architecture
 
-````text
-eks-vpc-cluster/
+```text
+AWS EKS Cluster
 │
-├── vpc/
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── terraform.tf
-│   └── backend.tf
+├── infra-tools
+│   └── Argo CD
+│       └── ApplicationSet
+│
+└── application
+    └── demo-nginx
+```
+
+### GitOps Flow
+
+```text
+GitHub Repository
+       │
+       │ namespace/*
+       ▼
+ApplicationSet
+       │
+       ▼
+Argo CD Applications
+       │
+       ▼
+Kubernetes
+       │
+       └── demo-nginx Deployment
+```
+
+---
+
+## Repository Structure
+
+The Terraform configuration for Argo CD is separated from the previously created EKS infrastructure.
+
+```text
+eks-vpc-argocd/
 │
 ├── eks/
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── terraform.tf
-│   ├── backend.tf
-│   └── data.tf
-│
-└── README.md
-
----
-
-# 1. AWS Authentication
-
-Для роботи Terraform використовується AWS CLI profile:
-
-```bash
-NatkaMLOps
-````
-
-Перевірити налаштування профілю:
-
-```bash
-aws configure list --profile NatkaMLOps
-```
-
-Перевірити доступ до AWS:
-
-```bash
-aws sts get-caller-identity --profile NatkaMLOps
-```
-
-Очікуваний результат:
-
-```json
-{
-  "UserId": "...",
-  "Account": "...",
-  "Arn": "arn:aws:iam::XXXXXXXXXXXX:user/NatkaMLOps"
-}
-```
-
-AWS account використовується для навчального MLOps-середовища.
-
----
-
-# 2. AWS Region
-
-У цьому проєкті використовується AWS Region:
-
-```text
-eu-north-1
-```
-
-Це регіон Stockholm.
-
-Перевірити регіон AWS CLI:
-
-```bash
-aws configure get region --profile NatkaMLOps
-```
-
----
-
-# 3. Terraform Backend
-
-Terraform state зберігається в Amazon S3.
-
-VPC та EKS мають окремі Terraform state.
-
-Концептуальна структура:
-
-S3 Terraform State Bucket
+│   └── Existing EKS infrastructure
 │
 ├── vpc/
-│ └── terraform.tfstate
+│   └── Existing VPC infrastructure
 │
-└── eks/
-└── terraform.tfstate
-
-Використання S3 backend дозволяє зберігати Terraform state централізовано та окремо для VPC і EKS.
-
----
-
-# 4. VPC Configuration
-
-Каталог:
-
-```bash
-cd vpc
-```
-
-VPC створюється за допомогою офіційного Terraform-модуля:
-
-```text
-terraform-aws-modules/vpc/aws
-```
-
-VPC містить:
-
-- VPC CIDR;
-- public subnets;
-- private subnets;
-- кілька Availability Zones;
-- NAT Gateway;
-- Internet Gateway;
-- route tables;
-- security groups;
-- Terraform backend;
-- Terraform outputs.
-
-Private subnets використовуються для розміщення EKS worker nodes.
-
----
-
-# 5. Initialize VPC
-
-Перейти до каталогу VPC:
-
-```bash
-cd vpc
-```
-
-Ініціалізувати Terraform:
-
-```bash
-terraform init
-```
-
-Перевірити конфігурацію:
-
-```bash
-terraform validate
-```
-
-Переглянути план:
-
-```bash
-terraform plan
-```
-
-Якщо план коректний, створити VPC:
-
-```bash
-terraform apply
-```
-
-Підтвердити створення:
-
-```text
-yes
-```
-
----
-
-# 6. VPC Outputs
-
-Після створення VPC можна перевірити Terraform outputs:
-
-```bash
-terraform output
-```
-
-Основні outputs:
-
-```text
-vpc_id
-public_subnets
-private_subnets
-```
-
-Окремо:
-
-```bash
-terraform output vpc_id
-```
-
-```bash
-terraform output public_subnets
-```
-
-```bash
-terraform output private_subnets
-```
-
-Ці значення використовуються EKS Terraform configuration.
-
----
-
-# 7. Terraform Remote State
-
-EKS не створює власну VPC.
-
-Замість цього EKS отримує інформацію про вже створену VPC через:
-
-```text
-terraform_remote_state
-```
-
-містить configuration для отримання VPC Terraform state.
-
-Концептуальна схема:
-
-VPC Terraform State
+├── terraform/
+│   └── argocd/
+│       ├── backend.tf
+│       ├── data.tf
+│       ├── main.tf
+│       ├── outputs.tf
+│       ├── provider.tf
+│       ├── terraform.tf
+│       ├── variables.tf
+│       └── values/
+│           └── argocd-values.yaml
 │
-│ terraform_remote_state
-▼
-EKS Terraform Configuration
-
-Таким чином, VPC та EKS залишаються окремими Terraform-конфігураціями.
-
-EKS отримує з VPC state:
-
-vpc_id
-private_subnets
-
----
-
-# 8. EKS Configuration
-
-Перейти до каталогу EKS:
-
-```bash
-cd ../eks
+├── screens/
+│   ├── argocd-ui-applications.png
+│   ├── gitops-repository.png
+│   ├── terraform-argocd-localhost.png
+│   └── project-tools-overview.png
+│
+├── .gitignore
+└── README.md
 ```
 
-EKS створюється за допомогою офіційного Terraform-модуля:
+The GitOps repository is maintained separately:
 
 ```text
-terraform-aws-modules/eks/aws
+goit-argo/
+│
+├── namespace/
+│   ├── application/
+│   │   ├── demo-nginx.yaml
+│   │   └── ns.yaml
+│   │
+│   └── infra-tools/
+│       └── ns.yaml
+│
+└── README.md
 ```
-
-Назва Kubernetes-кластера:
-
-mlops-eks
-
-AWS Region:
-
-eu-north-1
-
-EKS використовує дані з VPC remote state:
-
-vpc_id
-private_subnets
-
-Worker nodes розміщуються у private subnets.
 
 ---
 
-# 9. Initialize EKS
+## Argo CD Deployment
 
-Ініціалізувати Terraform:
+Argo CD is deployed using the Terraform `helm_release` resource.
+
+The official Argo Helm repository is used:
+
+```text
+https://argoproj.github.io/argo-helm
+```
+
+### Helm Release Configuration
+
+| Parameter      | Value         |
+| -------------- | ------------- |
+| Release        | `argocd`      |
+| Chart          | `argo-cd`     |
+| Namespace      | `infra-tools` |
+| Service type   | `ClusterIP`   |
+| Server mode    | `--insecure`  |
+| RBAC           | Enabled       |
+| ApplicationSet | Enabled       |
+
+All Helm values are stored separately in:
+
+```text
+terraform/argocd/values/argocd-values.yaml
+```
+
+The values file contains the required Argo CD configuration, including:
+
+- `ClusterIP` service
+- `--insecure` server argument
+- RBAC configuration
+- reconciliation timeout
+- requeue timeouts
+- resource requests and limits
+
+---
+
+## Terraform Deployment
+
+Navigate to the Argo CD Terraform directory:
+
+```bash
+cd terraform/argocd
+```
+
+### Initialize Terraform
 
 ```bash
 terraform init
 ```
 
-Перевірити конфігурацію:
+### Validate Configuration
 
 ```bash
 terraform validate
 ```
 
-Переглянути план:
+Expected result:
+
+```text
+Success! The configuration is valid.
+```
+
+### Create Execution Plan
 
 ```bash
 terraform plan
 ```
 
-Створити EKS:
+### Apply Configuration
 
 ```bash
 terraform apply
 ```
 
-Підтвердити:
+After successful deployment:
 
 ```text
-yes
+Apply complete! Resources: 0 added, 2 changed, 0 destroyed.
 ```
 
-Створення EKS та worker nodes може зайняти декілька хвилин.
-
----
-
-# 10. Node Groups
-
-У кластері створено дві окремі managed node groups для різних типів workloads.
-
-## CPU Nodes
-
-Node group:
+Expected outputs:
 
 ```text
-cpu-nodes
+argocd_namespace = "infra-tools"
+argocd_release_name = "argocd"
+argocd_status = "deployed"
 ```
-
-призначена для стандартних CPU workloads.
-
-Для ноди встановлено label:
-
-workload=cpu
-
-Instance type:
-
-t3.micro
-
-Workload/GPU Nodes
-
-Node group:
-
-gpu-nodes
-
-використовується як окрема workload node group для демонстрації ізоляції навантажень.
-
-Для ноди встановлено label:
-
-workload=gpu
-
-Також застосовується Kubernetes taint:
-
-workload=gpu:NoSchedule
-
-Це означає, що звичайні Kubernetes workloads без відповідного toleration не будуть заплановані на цю node group.
-
-Instance type:
-
-t3.micro
 
 ---
 
-# 11. EKS Cluster Verification
+## Verify Argo CD
 
-Перевірити список EKS-кластерів:
-
-aws eks list-clusters \
- --region eu-north-1 \
- --profile NatkaMLOps
-
-Очікується кластер:
-
-mlops-eks
-
----
-
-# 12. Configure kubectl
-
-Після створення EKS-кластера потрібно налаштувати `kubectl`.
-
-Використовується команда:
+### Check Argo CD Pods
 
 ```bash
-aws eks update-kubeconfig \
-  --region eu-north-1 \
-  --name mlops-eks \
-  --profile NatkaMLOps
+kubectl get pods -n infra-tools
 ```
 
-Перевірити поточний Kubernetes context:
-
-kubectl config current-context
-
----
-
-# 13. Check Kubernetes Cluster
-
-Перевірити підключення до Kubernetes:
-
-```bash
-kubectl cluster-info
-```
-
-Перевірити worker nodes:
-
-```bash
-kubectl get nodes
-```
-
-Очікується, що worker nodes мають статус:
-
-Ready
-
----
-
-# 14. Check Node Groups
-
-Список node groups:
-
-```bash
-aws eks list-nodegroups \
-  --cluster-name mlops-eks \
-  --region eu-north-1 \
-  --profile NatkaMLOps
-```
-
-У кластері створено дві node groups:
+All Argo CD components should have the status:
 
 ```text
-cpu-nodes
-gpu-nodes
+Running
 ```
 
-AWS автоматично додає унікальний суфікс до фактичної назви managed node group.
-
----
-
-# 15. Check Kubernetes Resources
-
-Перевірити всі nodes:
+### Check ApplicationSet
 
 ```bash
-kubectl get nodes -o wide
+kubectl get applicationset -n infra-tools
 ```
 
-Перевірити системні pods:
-
-```bash
-kubectl get pods -A
-```
-
-Перевірити namespaces:
-
-```bash
-kubectl get namespaces
-```
-
-Verified Kubernetes State
-
-Після створення інфраструктури Kubernetes cluster був успішно перевірений.
-
-Worker Nodes
-
-Команда:
-
-kubectl get nodes -o wide
-
-показала дві worker nodes зі статусом:
-
-STATUS
-Ready
-Ready
-
-Обидві nodes успішно підключені до EKS-кластера.
-
-Node Workloads
-
-Для перевірки workload labels використано:
-
-kubectl get nodes -L workload
-
-Результат:
-
-NAME STATUS WORKLOAD
-ip-10-0-11-124.eu-north-1.compute.internal Ready gpu
-ip-10-0-12-129.eu-north-1.compute.internal Ready cpu
-
-Таким чином, Kubernetes nodes мають відповідні labels:
-
-workload=gpu
-workload=cpu
-GPU Workload Isolation
-
-Для GPU/workload node перевірено Kubernetes taint:
-
-kubectl describe node ip-10-0-11-124.eu-north-1.compute.internal | grep -i taint
-
-Результат:
-
-Taints: workload=gpu:NoSchedule
-
-Це підтверджує, що workload isolation через Kubernetes taint успішно налаштована.
-
-Kubernetes System Pods
-
-Команда:
-
-kubectl get pods -A
-
-показала, що основні системні компоненти працюють:
-
-kube-system
-├── aws-node Running
-├── coredns Running
-└── kube-proxy Running
-
-AWS VPC CNI, CoreDNS та kube-proxy успішно працюють на worker nodes.
-
----
-
-# 16. Terraform State Verification
-
-Після успішного створення інфраструктури було виконано повторну перевірку Terraform state:
-
-terraform plan
-
-Результат:
-
-No changes. Your infrastructure matches the configuration.
-
-Terraform has compared your real infrastructure against your configuration
-and found no differences, so no changes are needed.
-
-Це підтверджує, що фактична AWS-інфраструктура відповідає поточній Terraform configuration.
-
-# 17. Deployment Order
-
-Інфраструктура створюється в такому порядку:
+Expected:
 
 ```text
-1. AWS Authentication
-        ↓
-2. Terraform VPC
-        ↓
-3. VPC Outputs
-        ↓
-4. terraform_remote_state
-        ↓
-5. Terraform EKS
-        ↓
-6. EKS Node Groups
-        ↓
-7. aws eks update-kubeconfig
-        ↓
-8. kubectl get nodes
+namespace-applications
 ```
 
-Спочатку потрібно створити VPC:
+### Check Argo CD Applications
 
 ```bash
-cd vpc
-
-terraform init
-terraform validate
-terraform plan
-terraform apply
+kubectl get applications -n infra-tools
 ```
 
-Після цього створюється EKS:
-
-```bash
-cd ../eks
-
-terraform init
-terraform validate
-terraform plan
-terraform apply
-```
-
-Після успішного створення EKS налаштовується Kubernetes context:
-
-aws eks update-kubeconfig \
- --region eu-north-1 \
- --name mlops-eks \
- --profile NatkaMLOps
-
-Після цього перевіряється стан worker nodes:
-
-kubectl get nodes
-
----
-
-# 18. Destroy Infrastructure
-
-Після завершення перевірки AWS-ресурси потрібно видалити, щоб уникнути зайвих витрат.
-
-## Delete EKS
-
-Спочатку:
-
-```bash
-cd eks
-```
-
-Виконати:
-
-```bash
-terraform destroy
-```
-
-Підтвердити:
+Expected result:
 
 ```text
-yes
+NAME          SYNC STATUS   HEALTH STATUS
+application   Synced        Healthy
+infra-tools   Synced        Healthy
 ```
 
-## Delete VPC
+This confirms that Argo CD successfully discovered the directories from the GitOps repository and created the corresponding Applications.
 
-Після успішного видалення EKS:
+---
+
+## Argo CD UI
+
+The Argo CD server is exposed locally using Kubernetes port-forwarding.
+
+Run:
 
 ```bash
-cd ../vpc
+kubectl port-forward service/argocd-server -n infra-tools 8080:80
 ```
 
-Виконати:
-
-```bash
-terraform destroy
-```
-
-Підтвердити:
+Open the following address in a browser:
 
 ```text
-yes
+http://localhost:8080
 ```
 
-Порядок видалення:
+### Login
+
+Username:
 
 ```text
-EKS
- ↓
-Node Groups
- ↓
-VPC
- ↓
-Subnets
- ↓
-NAT Gateway
- ↓
-Internet Gateway
+admin
 ```
 
-EKS необхідно видаляти **перед VPC**, оскільки кластер використовує мережеву інфраструктуру VPC.
+The initial administrator password can be retrieved from the Kubernetes Secret:
+
+```bash
+kubectl -n infra-tools get secret argocd-initial-admin-secret -o jsonpath="{.data.password}" | base64 -d
+```
+
+The password is intentionally not stored in this repository.
 
 ---
 
-# 19. Useful Commands
+## ApplicationSet
 
-## AWS identity
+The Argo CD ApplicationSet uses a Git directory generator.
 
-```bash
-aws sts get-caller-identity --profile NatkaMLOps
+The generator monitors:
+
+```text
+namespace/*
 ```
 
-## AWS region
+Each directory under `namespace/` is automatically discovered and deployed as a separate Argo CD Application.
 
-```bash
-aws configure get region --profile NatkaMLOps
+Current Applications:
+
+```text
+application
+infra-tools
 ```
 
-## List EKS clusters
+The `application` Application manages:
 
-```bash
-aws eks list-clusters \
-  --region eu-north-1 \
-  --profile NatkaMLOps
+```text
+namespace/application/
 ```
 
-## Update kubeconfig
+including the `demo-nginx` Deployment.
 
-```bash
-aws eks update-kubeconfig \
-  --region eu-north-1 \
-  --name <cluster-name> \
-  --profile NatkaMLOps
-```
+---
 
-## Kubernetes cluster info
+## GitOps Repository
 
-```bash
-kubectl cluster-info
-```
+The GitOps manifests are stored in a separate repository:
 
-## Kubernetes nodes
+**goit-argo**
 
-```bash
-kubectl get nodes
-```
+Repository:
 
-## Kubernetes nodes with details
+https://github.com/Your-Natka/goit-argo
 
-```bash
-kubectl get nodes -o wide
-```
+The repository contains the required structure:
 
-## Kubernetes nodes with workload labels
-
-```bash
-kubectl get nodes -L workload
-```
-
-## Kubernetes pods
-
-```bash
-kubectl get pods -A
-```
-
-## Kubernetes namespaces
-
-```bash
-kubectl get namespaces
-```
-
-## EKS node groups
-
-```bash
-aws eks list-nodegroups \
-  --cluster-name mlops-eks \
-  --region eu-north-1 \
-  --profile NatkaMLOps
-```
-
-## Terraform validation
-
-```bash
-terraform validate
-```
-
-## Terraform plan
-
-```bash
-terraform plan
+```text
+namespace/
+├── application/
+│   ├── demo-nginx.yaml
+│   └── ns.yaml
+│
+└── infra-tools/
+    └── ns.yaml
 ```
 
 ---
 
-# 20. Acceptance Criteria
+## Demo NGINX Application
 
-20. Acceptance Criteria
+The demo application is defined in:
 
-Проєкт відповідає вимогам домашнього завдання:
+```text
+namespace/application/demo-nginx.yaml
+```
 
-- Використовується Terraform.
-- Використовується terraform-aws-modules/vpc/aws.
-- Використовується terraform-aws-modules/eks/aws.
-- Є окремий каталог vpc/.
-- Є окремий каталог eks/.
-- VPC має public subnets.
-- VPC має private subnets.
-- Використовується кілька Availability Zones.
-- Налаштований NAT Gateway.
-- Налаштований Internet Gateway.
-- VPC експортує vpc_id.
-- VPC експортує public_subnets.
-- VPC експортує private_subnets.
-- EKS використовує terraform_remote_state.
-- EKS отримує VPC information через Terraform outputs.
-- Створюється CPU node group.
-- Створюється окрема workload/GPU node group.
-- CPU node має label workload=cpu.
-- Workload/GPU node має label workload=gpu.
-- Workload/GPU node має taint workload=gpu:NoSchedule.
-- terraform init працює для VPC.
-- terraform validate працює для VPC.
-- terraform apply працює для VPC.
-- terraform init працює для EKS.
-- terraform validate працює для EKS.
-- terraform apply працює для EKS.
-- terraform plan після створення повертає No changes.
-- Працює aws eks update-kubeconfig.
-- Працює kubectl cluster-info.
-- Працює kubectl get nodes.
-- Worker nodes мають статус Ready.
-- VPC CNI (aws-node) працює.
-- CoreDNS працює.
-- kube-proxy працює.
-- Після перевірки ресурси можуть бути видалені через terraform destroy.
+The manifest creates an NGINX Deployment with two replicas.
+
+### Verify Deployment
+
+```bash
+kubectl get deploy -n application
+```
+
+Expected result:
+
+```text
+NAME         READY   UP-TO-DATE   AVAILABLE
+demo-nginx   2/2     2            2
+```
+
+### Verify Pods
+
+```bash
+kubectl get pods -n application
+```
+
+Both Pods should have the status:
+
+```text
+1/1   Running
+```
 
 ---
 
-# 21. Conclusion
+## Access Demo NGINX
 
-У результаті було створено базову AWS-інфраструктуру для MLOps-середовища за допомогою Terraform.
+The NGINX application can be accessed locally using port-forwarding:
 
-Проєкт демонструє:
+```bash
+kubectl -n application port-forward deployment/demo-nginx 8081:80
+```
 
-- Infrastructure as Code;
-- модульний підхід Terraform;
-- окреме керування VPC та EKS;
-- Terraform Remote State;
-- передачу outputs між Terraform-конфігураціями;
-- використання Amazon VPC;
-- використання Amazon EKS;
-- Kubernetes cluster management;
-- створення managed node groups;
-- workload за допомогою Kubernetes labels та taints;
-- роботу з AWS CLI;
-- підключення до EKS через kubectl;
-- перевірку відповідності Terraform state фактичній інфраструктурі.
+Open:
 
-Фактична інфраструктура успішно перевірена:
+```text
+http://localhost:8081
+```
 
-VPC
-↓
-EKS cluster: mlops-eks
-↓
-CPU node group
-↓
-Workload/GPU node group
-↓
-2 Kubernetes nodes
-↓
-STATUS = Ready
+The default NGINX welcome page should be displayed.
 
-Workload isolation:
+---
 
-CPU node
-└── workload=cpu
+## GitOps Workflow
 
-GPU/workload node
-├── workload=gpu
-└── workload=gpu:NoSchedule
+The complete GitOps workflow is:
 
-Порядок створення:
+```text
+1. Modify Kubernetes manifests
+          │
+          ▼
+2. Commit changes
+          │
+          ▼
+3. Push changes to GitHub
+          │
+          ▼
+4. ApplicationSet detects namespace/*
+          │
+          ▼
+5. Argo CD creates or updates the Application
+          │
+          ▼
+6. Argo CD synchronizes Kubernetes resources
+          │
+          ▼
+7. Kubernetes runs the updated application
+```
 
-VPC → EKS → Node Groups → kubectl
+This demonstrates the GitOps deployment model, where Git acts as the source of truth for Kubernetes manifests.
 
-Порядок видалення:
+---
 
-EKS → VPC
+## Verification Summary
 
-Таким чином, Terraform configuration успішно створює, перевіряє та дозволяє керувати базовою AWS-інфраструктурою для майбутніх MLOps workloads.
+The Homework №3 requirements have been successfully verified:
+
+- [x] Argo CD deployed using Terraform `helm_release`
+- [x] Argo CD deployed into the `infra-tools` namespace
+- [x] Helm values stored in `argocd-values.yaml`
+- [x] `ClusterIP` service configured
+- [x] `--insecure` server mode configured
+- [x] RBAC configured
+- [x] Argo CD timeouts configured
+- [x] ApplicationSet configured with `namespace/*`
+- [x] GitOps repository contains the required namespace structure
+- [x] `application` Application is `Synced` and `Healthy`
+- [x] `infra-tools` Application is `Synced` and `Healthy`
+- [x] `demo-nginx` Deployment created
+- [x] Two NGINX Pods are running
+- [x] Argo CD UI successfully verified
+- [x] Demo NGINX application successfully verified
+
+---
+
+## Screenshots
+
+The repository contains screenshots demonstrating the deployment and verification process:
+
+- `argocd-ui-applications.png` — Argo CD UI with Applications
+- `gitops-repository.png` — GitOps repository structure
+- `terraform-argocd-localhost.png` — Terraform and local deployment process
+- `project-tools-overview.png` — project tools and running infrastructure overview
+
+---
+
+## Result
+
+The homework demonstrates a complete GitOps workflow:
+
+**Terraform → Helm → Argo CD → ApplicationSet → GitHub → Kubernetes → NGINX**
+
+Argo CD is successfully deployed to the existing EKS cluster, monitors the GitOps repository, automatically creates Applications from the `namespace/*` structure, and synchronizes Kubernetes resources.
