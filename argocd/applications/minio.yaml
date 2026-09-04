@@ -18,6 +18,15 @@ spec:
 
         fullnameOverride: minio
 
+        global:
+          security:
+            allowInsecureImages: true
+
+        image:
+          registry: docker.io
+          repository: bitnamilegacy/minio
+          tag: 2025.7.23-debian-12-r3
+
         auth:
           rootUser: minioadmin
           rootPassword: minioadmin123
