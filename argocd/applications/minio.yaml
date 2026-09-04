@@ -3,13 +3,15 @@ kind: Application
 metadata:
   name: minio
   namespace: infra-tools
+
 spec:
   project: default
 
   source:
-    chart: minio
-    repoURL: https://repo.broadcom.com/bitnami-files
-    targetRevision: "17.0.21"
+    repoURL: https://github.com/Your-Natka/eks-vpc-argocd.git
+    targetRevision: lesson-9
+    path: argocd/charts/minio
+
     helm:
       values: |
         mode: standalone
