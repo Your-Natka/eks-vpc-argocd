@@ -7,31 +7,32 @@ spec:
   project: default
 
   source:
-    chart: postgresql
-    repoURL: https://repo.broadcom.com/bitnami-files
-    targetRevision: "16.7.21"
-    helm:
-      values: |
-        fullnameOverride: postgres
+  repoURL: https://github.com/Your-Natka/eks-vpc-argocd.git
+  targetRevision: lesson-9
+  path: argocd/charts/postgresql
 
-        auth:
-          postgresPassword: postgres123
-          username: mlflow
-          password: mlflow123
-          database: mlflow
+  helm:
+    values: |
+      fullnameOverride: postgres
 
-        primary:
-          persistence:
-            enabled: true
-            size: 5Gi
+      auth:
+        postgresPassword: postgres123
+        username: mlflow
+        password: mlflow123
+        database: mlflow
 
-          resources:
-            requests:
-              cpu: 50m
-              memory: 128Mi
-            limits:
-              cpu: 200m
-              memory: 256Mi
+      primary:
+        persistence:
+          enabled: true
+          size: 5Gi
+
+        resources:
+          requests:
+            cpu: 50m
+            memory: 128Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
 
   destination:
     server: https://kubernetes.default.svc
