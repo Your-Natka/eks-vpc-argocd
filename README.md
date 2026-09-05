@@ -1,861 +1,636 @@
-# MLOps Homework №2 — VPC та EKS через Terraform
+# MLOps Homework №4 — MLflow, PushGateway, Prometheus та Grafana
 
 ## Опис проєкту
 
-Цей проєкт демонструє автоматизоване створення базової AWS-інфраструктури для майбутніх ML/MLOps-сервісів за допомогою **Terraform**.
+У межах домашнього завдання реалізовано ML/MLOps pipeline для навчання моделей машинного навчання, логування експериментів у MLflow та моніторингу результатів через Prometheus і Grafana.
 
-У межах завдання створюються:
+Інфраструктура розгортається в Kubernetes-кластері Amazon EKS та керується за допомогою ArgoCD.
 
-- AWS VPC;
-- public та private subnets;
-- NAT Gateway;
-- Internet Gateway;
-- Amazon EKS Kubernetes cluster;
-- окремі CPU та workload node groups;
-- workload isolation за допомогою Kubernetes labels та taints;
-- зв'язок між VPC та EKS через `terraform_remote_state`;
-- підключення до Kubernetes-кластера через `kubectl`.
+Основні компоненти:
 
-Інфраструктура розділена на дві незалежні Terraform-конфігурації:
-
-- `vpc/` — мережева інфраструктура;
-- `eks/` — Kubernetes/EKS інфраструктура.
+- MLflow Tracking Server;
+- MinIO для зберігання MLflow artifacts;
+- PostgreSQL для backend store MLflow;
+- Prometheus PushGateway;
+- Prometheus;
+- Grafana;
+- Python training script;
+- збереження найкращої моделі у `best_model/`.
 
 ---
 
 ## Технології
 
-- AWS
-- Terraform
-- Amazon VPC
-- Amazon EKS
+- AWS EKS
 - Kubernetes
-- kubectl
-- Terraform Remote State
-- Amazon S3 Backend
+- ArgoCD
+- Helm
+- MLflow
+- MinIO
+- PostgreSQL
+- Prometheus
+- Prometheus PushGateway
+- Grafana
+- Python
+- scikit-learn
+- joblib
 
 ---
 
 ## Структура проєкту
 
-````text
-eks-vpc-cluster/
+```text
+eks-vpc-argocd/
 │
-├── vpc/
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── terraform.tf
-│   └── backend.tf
+├── argocd/
+│   ├── applications/
+│   │   ├── minio.yaml
+│   │   ├── mlflow.yaml
+│   │   ├── postgres.yaml
+│   │   ├── prometheus-operator.yaml
+│   │   ├── prometheus-operator-crds.yaml
+│   │   └── pushgateway.yaml
+│   │
+│   ├── charts/
+│   │   ├── minio/
+│   │   └── postgresql/
+│   │
+│   └── crds/
+│       └── prometheus-operator/
+│           └── prometheus-operator-crds.yaml
 │
-├── eks/
-│   ├── main.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   ├── terraform.tf
-│   ├── backend.tf
-│   └── data.tf
+├── experiments/
+│   ├── train_and_push.py
+│   └── requirements.txt
+│
+├── best_model/
+│   └── best_model.joblib
+│
+├── screens/
+│   ├── 01-mlflow.png
+│   ├── 02-pushgateway.png
+│   ├── 03-prometheus-accuracy.png
+│   ├── 04-prometheus-loss.png
+│   ├── 05-grafana-accuracy.png
+│   └── 06-grafana-loss.png
 │
 └── README.md
+```
 
 ---
 
-# 1. AWS Authentication
+# 1. ArgoCD Applications
 
-Для роботи Terraform використовується AWS CLI profile:
+Для розгортання компонентів використовуються ArgoCD Applications.
 
-```bash
-NatkaMLOps
-````
-
-Перевірити налаштування профілю:
+Перевірити Applications:
 
 ```bash
-aws configure list --profile NatkaMLOps
+kubectl get applications -n infra-tools
 ```
 
-Перевірити доступ до AWS:
-
-```bash
-aws sts get-caller-identity --profile NatkaMLOps
-```
-
-Очікуваний результат:
-
-```json
-{
-  "UserId": "...",
-  "Account": "...",
-  "Arn": "arn:aws:iam::XXXXXXXXXXXX:user/NatkaMLOps"
-}
-```
-
-AWS account використовується для навчального MLOps-середовища.
-
----
-
-# 2. AWS Region
-
-У цьому проєкті використовується AWS Region:
+Основні Applications:
 
 ```text
-eu-north-1
+minio
+mlflow
+postgres
+prometheus-operator
+prometheus-operator-crds
+prometheus-pushgateway
 ```
 
-Це регіон Stockholm.
-
-Перевірити регіон AWS CLI:
-
-```bash
-aws configure get region --profile NatkaMLOps
-```
-
----
-
-# 3. Terraform Backend
-
-Terraform state зберігається в Amazon S3.
-
-VPC та EKS мають окремі Terraform state.
-
-Концептуальна структура:
-
-S3 Terraform State Bucket
-│
-├── vpc/
-│ └── terraform.tfstate
-│
-└── eks/
-└── terraform.tfstate
-
-Використання S3 backend дозволяє зберігати Terraform state централізовано та окремо для VPC і EKS.
-
----
-
-# 4. VPC Configuration
-
-Каталог:
-
-```bash
-cd vpc
-```
-
-VPC створюється за допомогою офіційного Terraform-модуля:
+Очікуваний стан основних компонентів:
 
 ```text
-terraform-aws-modules/vpc/aws
+Synced
 ```
 
-VPC містить:
-
-- VPC CIDR;
-- public subnets;
-- private subnets;
-- кілька Availability Zones;
-- NAT Gateway;
-- Internet Gateway;
-- route tables;
-- security groups;
-- Terraform backend;
-- Terraform outputs.
-
-Private subnets використовуються для розміщення EKS worker nodes.
+та відповідний `Healthy` status.
 
 ---
 
-# 5. Initialize VPC
+# 2. MLflow Infrastructure
 
-Перейти до каталогу VPC:
-
-```bash
-cd vpc
-```
-
-Ініціалізувати Terraform:
-
-```bash
-terraform init
-```
-
-Перевірити конфігурацію:
-
-```bash
-terraform validate
-```
-
-Переглянути план:
-
-```bash
-terraform plan
-```
-
-Якщо план коректний, створити VPC:
-
-```bash
-terraform apply
-```
-
-Підтвердити створення:
+Для MLflow використовується така архітектура:
 
 ```text
-yes
+                 MLflow
+                   │
+          ┌────────┴────────┐
+          │                 │
+     PostgreSQL           MinIO
+      backend            artifacts
+          │                 │
+          └────────┬────────┘
+                   │
+             MLflow Server
+                :5000
 ```
 
----
+### PostgreSQL
 
-# 6. VPC Outputs
+PostgreSQL використовується як backend store для MLflow.
 
-Після створення VPC можна перевірити Terraform outputs:
-
-```bash
-terraform output
-```
-
-Основні outputs:
+Database:
 
 ```text
-vpc_id
-public_subnets
-private_subnets
+mlflow
 ```
 
-Окремо:
+### MinIO
 
-```bash
-terraform output vpc_id
-```
+MinIO використовується для зберігання artifacts.
 
-```bash
-terraform output public_subnets
-```
-
-```bash
-terraform output private_subnets
-```
-
-Ці значення використовуються EKS Terraform configuration.
-
----
-
-# 7. Terraform Remote State
-
-EKS не створює власну VPC.
-
-Замість цього EKS отримує інформацію про вже створену VPC через:
+Bucket:
 
 ```text
-terraform_remote_state
+mlflow-artifacts
 ```
 
-містить configuration для отримання VPC Terraform state.
+### MLflow Tracking Server
 
-Концептуальна схема:
-
-VPC Terraform State
-│
-│ terraform_remote_state
-▼
-EKS Terraform Configuration
-
-Таким чином, VPC та EKS залишаються окремими Terraform-конфігураціями.
-
-EKS отримує з VPC state:
-
-vpc_id
-private_subnets
-
----
-
-# 8. EKS Configuration
-
-Перейти до каталогу EKS:
-
-```bash
-cd ../eks
-```
-
-EKS створюється за допомогою офіційного Terraform-модуля:
+MLflow Tracking Server працює на порту:
 
 ```text
-terraform-aws-modules/eks/aws
+5000
 ```
-
-Назва Kubernetes-кластера:
-
-mlops-eks
-
-AWS Region:
-
-eu-north-1
-
-EKS використовує дані з VPC remote state:
-
-vpc_id
-private_subnets
-
-Worker nodes розміщуються у private subnets.
 
 ---
 
-# 9. Initialize EKS
+# 3. Перевірка MLflow
 
-Ініціалізувати Terraform:
-
-```bash
-terraform init
-```
-
-Перевірити конфігурацію:
+Перевірити Service:
 
 ```bash
-terraform validate
+kubectl get svc -n mlflow
 ```
 
-Переглянути план:
+Для локального доступу:
 
 ```bash
-terraform plan
+kubectl port-forward svc/mlflow 5000:5000 -n mlflow
 ```
 
-Створити EKS:
-
-```bash
-terraform apply
-```
-
-Підтвердити:
+Після цього відкрити:
 
 ```text
-yes
+http://localhost:5000
 ```
 
-Створення EKS та worker nodes може зайняти декілька хвилин.
+На MLflow Tracking Server відображаються experiments та runs, створені training script.
+
+### MLflow screenshot
+
+![MLflow](screens/01-mlflow.png)
 
 ---
 
-# 10. Node Groups
+# 4. Training Script
 
-У кластері створено дві окремі managed node groups для різних типів workloads.
-
-## CPU Nodes
-
-Node group:
+Основний training script:
 
 ```text
-cpu-nodes
+experiments/train_and_push.py
 ```
 
-призначена для стандартних CPU workloads.
+Скрипт використовує Iris dataset та навчає декілька моделей `LogisticRegression` з різними параметрами.
 
-Для ноди встановлено label:
+Для кожного запуску в MLflow логуються:
 
-workload=cpu
+- model parameters;
+- accuracy;
+- log loss;
+- trained model.
 
-Instance type:
-
-t3.micro
-
-Workload/GPU Nodes
-
-Node group:
-
-gpu-nodes
-
-використовується як окрема workload node group для демонстрації ізоляції навантажень.
-
-Для ноди встановлено label:
-
-workload=gpu
-
-Також застосовується Kubernetes taint:
-
-workload=gpu:NoSchedule
-
-Це означає, що звичайні Kubernetes workloads без відповідного toleration не будуть заплановані на цю node group.
-
-Instance type:
-
-t3.micro
+Також для кожного MLflow run генерується `run_id`.
 
 ---
 
-# 11. EKS Cluster Verification
+# 5. Python Dependencies
 
-Перевірити список EKS-кластерів:
-
-aws eks list-clusters \
- --region eu-north-1 \
- --profile NatkaMLOps
-
-Очікується кластер:
-
-mlops-eks
-
----
-
-# 12. Configure kubectl
-
-Після створення EKS-кластера потрібно налаштувати `kubectl`.
-
-Використовується команда:
-
-```bash
-aws eks update-kubeconfig \
-  --region eu-north-1 \
-  --name mlops-eks \
-  --profile NatkaMLOps
-```
-
-Перевірити поточний Kubernetes context:
-
-kubectl config current-context
-
----
-
-# 13. Check Kubernetes Cluster
-
-Перевірити підключення до Kubernetes:
-
-```bash
-kubectl cluster-info
-```
-
-Перевірити worker nodes:
-
-```bash
-kubectl get nodes
-```
-
-Очікується, що worker nodes мають статус:
-
-Ready
-
----
-
-# 14. Check Node Groups
-
-Список node groups:
-
-```bash
-aws eks list-nodegroups \
-  --cluster-name mlops-eks \
-  --region eu-north-1 \
-  --profile NatkaMLOps
-```
-
-У кластері створено дві node groups:
+Залежності знаходяться у:
 
 ```text
-cpu-nodes
-gpu-nodes
+experiments/requirements.txt
 ```
 
-AWS автоматично додає унікальний суфікс до фактичної назви managed node group.
+Встановлення:
+
+```bash
+pip install -r experiments/requirements.txt
+```
 
 ---
 
-# 15. Check Kubernetes Resources
+# 6. Запуск Training Script
 
-Перевірити всі nodes:
+Перед запуском необхідно переконатися, що MLflow та PushGateway доступні з середовища, де запускається script.
+
+Запуск:
 
 ```bash
-kubectl get nodes -o wide
+python experiments/train_and_push.py
 ```
 
-Перевірити системні pods:
+Після виконання script:
+
+1. створює MLflow experiment;
+2. запускає декілька LogisticRegression experiments;
+3. логуються parameters;
+4. логуються metrics;
+5. модель зберігається в MLflow;
+6. `accuracy` та `loss` відправляються до PushGateway;
+7. визначається найкращий результат;
+8. найкраща модель копіюється у `best_model/`.
+
+---
+
+# 7. Best Model
+
+Найкраща модель зберігається у:
+
+```text
+best_model/best_model.joblib
+```
+
+Вона вибирається за найвищим значенням `accuracy`.
+
+Перевірити файл:
+
+```bash
+ls -lh best_model/
+```
+
+Очікується:
+
+```text
+best_model.joblib
+```
+
+---
+
+# 8. Prometheus PushGateway
+
+PushGateway розгорнутий через ArgoCD у namespace:
+
+```text
+monitoring
+```
+
+Service:
+
+```text
+prometheus-pushgateway
+```
+
+Тип:
+
+```text
+ClusterIP
+```
+
+Port:
+
+```text
+9091
+```
+
+Перевірити:
+
+```bash
+kubectl get svc -n monitoring
+```
+
+Для локального доступу:
+
+```bash
+kubectl port-forward svc/prometheus-pushgateway 9092:9091 -n monitoring
+```
+
+Після цього:
+
+```text
+http://localhost:9092/metrics
+```
+
+У metrics повинні бути:
+
+```text
+mlflow_accuracy
+mlflow_loss
+```
+
+Кожна метрика має label:
+
+```text
+run_id
+```
+
+Приклад:
+
+```text
+mlflow_accuracy{job="mlflow_experiments",run_id="..."} ...
+```
+
+### PushGateway screenshot
+
+![PushGateway](screens/02-pushgateway.png)
+
+---
+
+# 9. Prometheus
+
+Prometheus розгорнутий через Prometheus Operator.
+
+Для PushGateway використовується Kubernetes `ServiceMonitor`.
+
+Перевірити ServiceMonitor:
+
+```bash
+kubectl get servicemonitor -A
+```
+
+Очікується:
+
+```text
+monitoring   prometheus-pushgateway
+```
+
+ServiceMonitor дозволяє Prometheus автоматично збирати metrics з PushGateway.
+
+---
+
+# 10. Prometheus — mlflow_accuracy
+
+Для перевірки accuracy використовується PromQL:
+
+```promql
+mlflow_accuracy
+```
+
+Метрика містить `run_id`, що дозволяє пов'язати Prometheus metric із конкретним MLflow run.
+
+### Prometheus accuracy
+
+![Prometheus accuracy](screens/03-prometheus-accuracy.png)
+
+---
+
+# 11. Prometheus — mlflow_loss
+
+Для перевірки loss використовується:
+
+```promql
+mlflow_loss
+```
+
+### Prometheus loss
+
+![Prometheus loss](screens/04-prometheus-loss.png)
+
+---
+
+# 12. Grafana
+
+Grafana використовується для візуалізації Prometheus metrics.
+
+Для локального доступу:
+
+```bash
+kubectl port-forward svc/prometheus-operator-grafana 3000:80 -n infra-tools
+```
+
+Відкрити:
+
+```text
+http://localhost:3000
+```
+
+Для входу використовується користувач `admin` та пароль з Kubernetes Secret:
+
+```bash
+kubectl get secret prometheus-operator-grafana -n infra-tools \
+  -o jsonpath="{.data.admin-password}" | base64 --decode
+echo
+```
+
+---
+
+# 13. Grafana Explore — mlflow_accuracy
+
+У Grafana відкрито:
+
+```text
+Explore
+```
+
+Data source:
+
+```text
+Prometheus
+```
+
+PromQL query:
+
+```promql
+mlflow_accuracy
+```
+
+Метрика успішно відображається у Grafana.
+
+### Grafana accuracy
+
+![Grafana accuracy](screens/05-grafana-accuracy.png)
+
+---
+
+# 14. Grafana Explore — mlflow_loss
+
+Для перевірки loss використовується:
+
+```promql
+mlflow_loss
+```
+
+Метрика успішно відображається у Grafana.
+
+### Grafana loss
+
+![Grafana loss](screens/06-grafana-loss.png)
+
+---
+
+# 15. Перевірка Kubernetes
+
+Перевірити pods:
 
 ```bash
 kubectl get pods -A
 ```
 
-Перевірити namespaces:
+Перевірити MLflow:
 
 ```bash
-kubectl get namespaces
+kubectl get pods -n mlflow
 ```
 
-Verified Kubernetes State
+Перевірити monitoring:
 
-Після створення інфраструктури Kubernetes cluster був успішно перевірений.
+```bash
+kubectl get pods -n monitoring
+```
 
-Worker Nodes
+Перевірити ArgoCD Applications:
 
-Команда:
-
-kubectl get nodes -o wide
-
-показала дві worker nodes зі статусом:
-
-STATUS
-Ready
-Ready
-
-Обидві nodes успішно підключені до EKS-кластера.
-
-Node Workloads
-
-Для перевірки workload labels використано:
-
-kubectl get nodes -L workload
-
-Результат:
-
-NAME STATUS WORKLOAD
-ip-10-0-11-124.eu-north-1.compute.internal Ready gpu
-ip-10-0-12-129.eu-north-1.compute.internal Ready cpu
-
-Таким чином, Kubernetes nodes мають відповідні labels:
-
-workload=gpu
-workload=cpu
-GPU Workload Isolation
-
-Для GPU/workload node перевірено Kubernetes taint:
-
-kubectl describe node ip-10-0-11-124.eu-north-1.compute.internal | grep -i taint
-
-Результат:
-
-Taints: workload=gpu:NoSchedule
-
-Це підтверджує, що workload isolation через Kubernetes taint успішно налаштована.
-
-Kubernetes System Pods
-
-Команда:
-
-kubectl get pods -A
-
-показала, що основні системні компоненти працюють:
-
-kube-system
-├── aws-node Running
-├── coredns Running
-└── kube-proxy Running
-
-AWS VPC CNI, CoreDNS та kube-proxy успішно працюють на worker nodes.
+```bash
+kubectl get applications -n infra-tools
+```
 
 ---
 
-# 16. Terraform State Verification
+# 16. Основні port-forward команди
 
-Після успішного створення інфраструктури було виконано повторну перевірку Terraform state:
+### MLflow
 
-terraform plan
+```bash
+kubectl port-forward svc/mlflow 5000:5000 -n mlflow
+```
 
-Результат:
-
-No changes. Your infrastructure matches the configuration.
-
-Terraform has compared your real infrastructure against your configuration
-and found no differences, so no changes are needed.
-
-Це підтверджує, що фактична AWS-інфраструктура відповідає поточній Terraform configuration.
-
-# 17. Deployment Order
-
-Інфраструктура створюється в такому порядку:
+URL:
 
 ```text
-1. AWS Authentication
-        ↓
-2. Terraform VPC
-        ↓
-3. VPC Outputs
-        ↓
-4. terraform_remote_state
-        ↓
-5. Terraform EKS
-        ↓
-6. EKS Node Groups
-        ↓
-7. aws eks update-kubeconfig
-        ↓
-8. kubectl get nodes
+http://localhost:5000
 ```
 
-Спочатку потрібно створити VPC:
+### PushGateway
 
 ```bash
-cd vpc
-
-terraform init
-terraform validate
-terraform plan
-terraform apply
+kubectl port-forward svc/prometheus-pushgateway 9092:9091 -n monitoring
 ```
 
-Після цього створюється EKS:
-
-```bash
-cd ../eks
-
-terraform init
-terraform validate
-terraform plan
-terraform apply
-```
-
-Після успішного створення EKS налаштовується Kubernetes context:
-
-aws eks update-kubeconfig \
- --region eu-north-1 \
- --name mlops-eks \
- --profile NatkaMLOps
-
-Після цього перевіряється стан worker nodes:
-
-kubectl get nodes
-
----
-
-# 18. Destroy Infrastructure
-
-Після завершення перевірки AWS-ресурси потрібно видалити, щоб уникнути зайвих витрат.
-
-## Delete EKS
-
-Спочатку:
-
-```bash
-cd eks
-```
-
-Виконати:
-
-```bash
-terraform destroy
-```
-
-Підтвердити:
+URL:
 
 ```text
-yes
+http://localhost:9092/metrics
 ```
 
-## Delete VPC
-
-Після успішного видалення EKS:
+### Grafana
 
 ```bash
-cd ../vpc
+kubectl port-forward svc/prometheus-operator-grafana 3000:80 -n infra-tools
 ```
 
-Виконати:
-
-```bash
-terraform destroy
-```
-
-Підтвердити:
+URL:
 
 ```text
-yes
+http://localhost:3000
 ```
 
-Порядок видалення:
+### Prometheus
+
+Для Prometheus використовується локальний port-forward на порт `9090`.
+
+URL:
 
 ```text
-EKS
- ↓
-Node Groups
- ↓
-VPC
- ↓
-Subnets
- ↓
-NAT Gateway
- ↓
-Internet Gateway
-```
-
-EKS необхідно видаляти **перед VPC**, оскільки кластер використовує мережеву інфраструктуру VPC.
-
----
-
-# 19. Useful Commands
-
-## AWS identity
-
-```bash
-aws sts get-caller-identity --profile NatkaMLOps
-```
-
-## AWS region
-
-```bash
-aws configure get region --profile NatkaMLOps
-```
-
-## List EKS clusters
-
-```bash
-aws eks list-clusters \
-  --region eu-north-1 \
-  --profile NatkaMLOps
-```
-
-## Update kubeconfig
-
-```bash
-aws eks update-kubeconfig \
-  --region eu-north-1 \
-  --name <cluster-name> \
-  --profile NatkaMLOps
-```
-
-## Kubernetes cluster info
-
-```bash
-kubectl cluster-info
-```
-
-## Kubernetes nodes
-
-```bash
-kubectl get nodes
-```
-
-## Kubernetes nodes with details
-
-```bash
-kubectl get nodes -o wide
-```
-
-## Kubernetes nodes with workload labels
-
-```bash
-kubectl get nodes -L workload
-```
-
-## Kubernetes pods
-
-```bash
-kubectl get pods -A
-```
-
-## Kubernetes namespaces
-
-```bash
-kubectl get namespaces
-```
-
-## EKS node groups
-
-```bash
-aws eks list-nodegroups \
-  --cluster-name mlops-eks \
-  --region eu-north-1 \
-  --profile NatkaMLOps
-```
-
-## Terraform validation
-
-```bash
-terraform validate
-```
-
-## Terraform plan
-
-```bash
-terraform plan
+http://localhost:9090
 ```
 
 ---
 
-# 20. Acceptance Criteria
+# 17. Monitoring Flow
 
-20. Acceptance Criteria
+Повний flow моніторингу:
 
-Проєкт відповідає вимогам домашнього завдання:
-
-- Використовується Terraform.
-- Використовується terraform-aws-modules/vpc/aws.
-- Використовується terraform-aws-modules/eks/aws.
-- Є окремий каталог vpc/.
-- Є окремий каталог eks/.
-- VPC має public subnets.
-- VPC має private subnets.
-- Використовується кілька Availability Zones.
-- Налаштований NAT Gateway.
-- Налаштований Internet Gateway.
-- VPC експортує vpc_id.
-- VPC експортує public_subnets.
-- VPC експортує private_subnets.
-- EKS використовує terraform_remote_state.
-- EKS отримує VPC information через Terraform outputs.
-- Створюється CPU node group.
-- Створюється окрема workload/GPU node group.
-- CPU node має label workload=cpu.
-- Workload/GPU node має label workload=gpu.
-- Workload/GPU node має taint workload=gpu:NoSchedule.
-- terraform init працює для VPC.
-- terraform validate працює для VPC.
-- terraform apply працює для VPC.
-- terraform init працює для EKS.
-- terraform validate працює для EKS.
-- terraform apply працює для EKS.
-- terraform plan після створення повертає No changes.
-- Працює aws eks update-kubeconfig.
-- Працює kubectl cluster-info.
-- Працює kubectl get nodes.
-- Worker nodes мають статус Ready.
-- VPC CNI (aws-node) працює.
-- CoreDNS працює.
-- kube-proxy працює.
-- Після перевірки ресурси можуть бути видалені через terraform destroy.
+```text
+train_and_push.py
+        │
+        ├── MLflow
+        │     ├── parameters
+        │     ├── metrics
+        │     └── model
+        │
+        └── PushGateway
+              │
+              ├── mlflow_accuracy
+              └── mlflow_loss
+                      │
+                      ▼
+                  Prometheus
+                      │
+                      ▼
+                   Grafana
+                    Explore
+```
 
 ---
 
-# 21. Conclusion
+# 18. Результат
 
-У результаті було створено базову AWS-інфраструктуру для MLOps-середовища за допомогою Terraform.
+У результаті домашнього завдання реалізовано повний цикл:
 
-Проєкт демонструє:
+```text
+Model Training
+      ↓
+MLflow Tracking
+      ↓
+Model Artifact
+      ↓
+Best Model
+      ↓
+PushGateway
+      ↓
+Prometheus
+      ↓
+Grafana
+```
 
-- Infrastructure as Code;
-- модульний підхід Terraform;
-- окреме керування VPC та EKS;
-- Terraform Remote State;
-- передачу outputs між Terraform-конфігураціями;
-- використання Amazon VPC;
-- використання Amazon EKS;
-- Kubernetes cluster management;
-- створення managed node groups;
-- workload за допомогою Kubernetes labels та taints;
-- роботу з AWS CLI;
-- підключення до EKS через kubectl;
-- перевірку відповідності Terraform state фактичній інфраструктурі.
+Реалізовані вимоги:
 
-Фактична інфраструктура успішно перевірена:
+- MLflow Tracking Server розгорнутий через ArgoCD;
+- PostgreSQL використовується як MLflow backend store;
+- MinIO використовується для artifacts;
+- створено bucket `mlflow-artifacts`;
+- PostgreSQL database `mlflow`;
+- PushGateway розгорнутий у namespace `monitoring`;
+- PushGateway має ClusterIP service на порту `9091`;
+- training script працює з Iris dataset;
+- LogisticRegression запускається з різними параметрами;
+- parameters та metrics логуються в MLflow;
+- `accuracy` та `loss` відправляються до PushGateway;
+- metrics містять `run_id`;
+- найкраща модель зберігається у `best_model/best_model.joblib`;
+- Prometheus збирає PushGateway metrics;
+- `mlflow_accuracy` перевірено у Prometheus;
+- `mlflow_loss` перевірено у Prometheus;
+- `mlflow_accuracy` перевірено у Grafana Explore;
+- `mlflow_loss` перевірено у Grafana Explore.
 
-VPC
-↓
-EKS cluster: mlops-eks
-↓
-CPU node group
-↓
-Workload/GPU node group
-↓
-2 Kubernetes nodes
-↓
-STATUS = Ready
+---
 
-Workload isolation:
+# 19. Screenshots
 
-CPU node
-└── workload=cpu
+### MLflow
 
-GPU/workload node
-├── workload=gpu
-└── workload=gpu:NoSchedule
+![MLflow](screens/01-mlflow.png)
 
-Порядок створення:
+### PushGateway
 
-VPC → EKS → Node Groups → kubectl
+![PushGateway](screens/02-pushgateway.png)
 
-Порядок видалення:
+### Prometheus — accuracy
 
-EKS → VPC
+![Prometheus accuracy](screens/03-prometheus-accuracy.png)
 
-Таким чином, Terraform configuration успішно створює, перевіряє та дозволяє керувати базовою AWS-інфраструктурою для майбутніх MLOps workloads.
+### Prometheus — loss
+
+![Prometheus loss](screens/04-prometheus-loss.png)
+
+### Grafana — accuracy
+
+![Grafana accuracy](screens/05-grafana-accuracy.png)
+
+### Grafana — loss
+
+![Grafana loss](screens/06-grafana-loss.png)
