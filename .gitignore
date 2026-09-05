@@ -20,3 +20,5 @@ override.tf.json
 
 __pycache__/
 *.pyc
+# ML experiment artifacts
+models/
