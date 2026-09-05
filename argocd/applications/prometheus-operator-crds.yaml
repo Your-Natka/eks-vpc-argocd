@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: prometheus-operator-crds
+  namespace: infra-tools
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/Your-Natka/eks-vpc-argocd.git
+    targetRevision: lesson-9
+    path: argocd/crds/prometheus-operator
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: infra-tools
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - ServerSideApply=true
