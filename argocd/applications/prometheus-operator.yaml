@@ -59,12 +59,14 @@ spec:
 
         prometheusOperator:
           admissionWebhooks:
-            enabled: true
+            enabled: false
             patch:
-              enabled: true
+              enabled: false
             certManager:
               enabled: false
-            autoGenerateCert: true
+            autoGenerateCert: false
+          tls:
+            enabled: false
 
         kube-state-metrics:
           prometheus:
