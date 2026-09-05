@@ -71,8 +71,7 @@ spec:
               enabled: true
 
         prometheus-node-exporter:
-          service:
-            port: 9200
+          enabled: false
 
   syncPolicy:
     automated:
