@@ -73,7 +73,7 @@ spec:
             monitor:
               enabled: true
 
-        prometheus-node-exporter:
+        nodeExporter:
           enabled: false
 
   syncPolicy:
