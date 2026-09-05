@@ -39,6 +39,11 @@ spec:
             serviceMonitorSelector: {}
             serviceMonitorSelectorNilUsesHelmValues: false
             retention: 2d
+            tolerations:
+              - key: workload
+                operator: Equal
+                value: gpu
+                effect: NoSchedule
 
         kubelet:
           enabled: true
