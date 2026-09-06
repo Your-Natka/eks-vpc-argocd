@@ -1,547 +1,496 @@
-# MLOps Homework №10 — Інтеграція GitLab CI з AWS Step Functions
+# MLOps Production Platform
 
 ## Опис проєкту
 
-У межах домашнього завдання реалізовано автоматизацію запуску ML training workflow за допомогою **GitLab CI/CD**, **AWS Step Functions** та **AWS Lambda**.
+Цей проєкт реалізує production-oriented MLOps platform для автоматизованого навчання, реєстрації, контрольованого розгортання та моніторингу ML-моделей.
 
-Інфраструктура AWS створюється та керується за допомогою **Terraform**.
+Платформа об'єднує компоненти, реалізовані в попередніх домашніх завданнях, та розширює їх до повного end-to-end workflow.
 
-Основна логіка побудована таким чином:
+Основний pipeline:
 
 ```text
-GitLab CI
-    │
-    │ aws stepfunctions start-execution
-    │
-    ▼
-AWS Step Functions
-    │
-    ├── ValidateData
-    │       │
-    │       ▼
-    │   Lambda: validate
-    │
-    └── LogMetrics
+Git commit / scheduled trigger
             │
             ▼
-        Lambda: log_metrics
+       GitLab CI/CD
+            │
+            ▼
+   AWS Step Functions
+            │
+            ▼
+      Training workflow
+            │
+            ▼
+      MLflow Tracking
+            │
+            ▼
+    MLflow Model Registry
+            │
+      ┌─────┴─────┐
+      │           │
+   Staging    Production
+                  │
+                  ▼
+             Kubernetes
+                  │
+          ┌───────┴───────┐
+          │               │
+       Inference       Monitoring
+          │               │
+       FastAPI       Prometheus
+          │            Grafana
+          │             Loki
+          │           Evidently
+          ▼
+       Predictions
 ```
 
-GitLab CI передає до Step Functions Git-контекст поточного pipeline:
+## 1. Цілі проєкту
 
-- `source`;
-- `commit`;
-- `branch`;
-- `pipeline_id`.
+Платформа повинна забезпечувати:
 
-Це дозволяє пов'язати конкретний запуск training workflow з версією коду та GitLab pipeline, який його запустив.
+- автоматизований запуск training workflow;
+- traceability між Git commit, pipeline, training run та model version;
+- реєстрацію моделей у MLflow Model Registry;
+- контрольований перехід моделей `Staging → Production`;
+- безпечне розгортання моделей у Kubernetes;
+- можливість rollback;
+- технічний та model-level monitoring;
+- базовий security baseline;
+- GitOps deployment через ArgoCD;
+- відтворюване створення інфраструктури через Terraform;
+- документацію для deployment та support.
 
----
+## 2. Architecture
 
-# 1. Структура проєкту
+Основні компоненти платформи:
 
-Основний GitHub-репозиторій:
+- AWS VPC;
+- AWS EKS;
+- AWS S3;
+- AWS IAM;
+- AWS ECR;
+- AWS Step Functions;
+- AWS Lambda;
+- Terraform;
+- Kubernetes;
+- Helm;
+- ArgoCD;
+- MLflow;
+- PostgreSQL;
+- MinIO / S3-compatible artifact storage;
+- Prometheus;
+- Grafana;
+- Loki;
+- Evidently AI;
+- FastAPI;
+- Docker;
+- GitLab CI/CD.
+
+### High-level architecture
 
 ```text
-eks-vpc-argocd/
+                    Git
+                     │
+                     ▼
+              GitLab CI/CD
+                     │
+                     ▼
+             AWS Step Functions
+                     │
+                     ▼
+              Training workflow
+                     │
+          ┌──────────┴──────────┐
+          │                     │
+          ▼                     ▼
+    MLflow Tracking        Model artifacts
+          │                     │
+          └──────────┬──────────┘
+                     ▼
+            MLflow Model Registry
+                     │
+              Staging / Production
+                     │
+                     ▼
+                   ECR
+                     │
+                     ▼
+                  ArgoCD
+                     │
+                     ▼
+                  EKS
+             ┌───────┴────────┐
+             │                │
+          Staging         Production
+             │                │
+             └───────┬────────┘
+                     ▼
+               FastAPI model
+                     │
+          ┌──────────┼──────────┐
+          ▼          ▼          ▼
+     Prometheus    Loki      Evidently
+          │          │          │
+          └──────────┼──────────┘
+                     ▼
+                  Grafana
 ```
 
-Для цього домашнього завдання використовується гілка:
-
-```text
-lesson-10
-```
-
-Структура Terraform:
+## 3. Repository structure
 
 ```text
 eks-vpc-argocd/
 │
-└── terraform/
-    ├── main.tf
-    ├── data.tf
-    ├── terraform.tf
-    ├── variables.tf
-    ├── outputs.tf
-    │
-    └── lambda/
-        ├── validate.py
-        ├── validate.zip
-        ├── log_metrics.py
-        └── log_metrics.zip
-```
-
-GitLab CI зберігається в окремому приватному репозиторії:
-
-```text
-mlops-pipeline-10/
+├── README.md
+├── RUNBOOK.md
+├── ADR.md
 │
-└── .gitlab-ci.yml
+├── vpc/
+│
+├── eks/
+│
+├── terraform/
+│   └── ...
+│
+├── argocd/
+│   ├── applications/
+│   ├── charts/
+│   └── crds/
+│
+├── experiments/
+│   ├── requirements.txt
+│   └── train_and_push.py
+│
+├── models/
+│
+├── best_model/
+│
+├── screens/
+│
+└── ...
 ```
 
-GitLab-репозиторій використовується тільки для CI/CD pipeline, який запускає вже створений AWS Step Functions workflow.
+Структура буде розширюватися відповідно до реалізації фінального проєкту.
 
----
+## 4. Infrastructure
 
-# 2. Використані технології
+AWS infrastructure створюється та керується Terraform.
 
-- AWS
-- AWS Lambda
-- AWS Step Functions
-- AWS IAM
-- Terraform
-- GitHub
-- GitLab
-- GitLab CI/CD
-- AWS CLI
-- Python
+Основні компоненти:
 
----
+- VPC;
+- EKS cluster;
+- Kubernetes node groups;
+- IAM roles;
+- S3;
+- ECR;
+- Step Functions;
+- Lambda;
+- необхідні security та access policies.
 
-# 3. AWS Region
+Deployment infrastructure повинен бути відтворюваним з чистого стану.
 
-У проєкті використовується AWS region:
-
-```text
-eu-north-1
-```
-
-Terraform variable:
-
-```hcl
-variable "aws_region" {
-  description = "AWS region"
-  type        = string
-  default     = "eu-north-1"
-}
-```
-
----
-
-# 4. AWS Lambda
-
-У workflow використовуються дві Lambda-функції.
-
-## Validate Lambda
-
-Файл:
-
-```text
-terraform/lambda/validate.py
-```
-
-Код:
-
-```python
-def handler(event, context):
-    print("Validating input data...")
-
-    return {
-        "status": "valid"
-    }
-```
-
-Lambda виконує перевірку вхідних даних та повертає статус:
-
-```json
-{
-  "status": "valid"
-}
-```
-
----
-
-## Log Metrics Lambda
-
-Файл:
-
-```text
-terraform/lambda/log_metrics.py
-```
-
-Код:
-
-```python
-def handler(event, context):
-    print("Logging metrics...")
-
-    return {
-        "status": "logged"
-    }
-```
-
-Lambda імітує логування metrics та повертає:
-
-```json
-{
-  "status": "logged"
-}
-```
-
----
-
-# 5. Lambda ZIP packages
-
-Для deployment Lambda використовуються ZIP-архіви:
-
-```text
-terraform/lambda/validate.zip
-terraform/lambda/log_metrics.zip
-```
-
-ZIP-файли створюються командами:
-
-```bash
-cd terraform/lambda
-
-zip validate.zip validate.py
-zip log_metrics.zip log_metrics.py
-```
-
-Таким чином кожна Lambda має окремий deployment package.
-
----
-
-# 6. Terraform
-
-Terraform використовується для автоматичного створення AWS infrastructure.
-
-Основні Terraform-файли:
-
-```text
-terraform/
-├── main.tf
-├── data.tf
-├── terraform.tf
-├── variables.tf
-└── outputs.tf
-```
-
-Terraform створює:
-
-1. IAM role для Lambda;
-2. IAM policy attachment для Lambda;
-3. Lambda `mlops-training-validate`;
-4. Lambda `mlops-training-log-metrics`;
-5. IAM role для Step Functions;
-6. IAM policy для виклику Lambda з Step Functions;
-7. AWS Step Functions state machine `MLOpsPipeline`.
-
----
-
-# 7. Terraform deployment
-
-Перед виконанням Terraform необхідно мати налаштований AWS CLI profile.
-
-У цьому проєкті використовується profile:
-
-```text
-NatkaMLOps
-```
-
-Перевірка AWS credentials:
-
-```bash
-aws configure list --profile NatkaMLOps
-```
-
-Перевірка AWS account:
-
-```bash
-aws sts get-caller-identity --profile NatkaMLOps
-```
-
-Перехід у Terraform directory:
-
-```bash
-cd terraform
-```
-
-Ініціалізація Terraform:
+### Terraform workflow
 
 ```bash
 terraform init
-```
-
-Перевірка configuration:
-
-```bash
 terraform validate
-```
-
-Створення plan:
-
-```bash
 terraform plan
-```
-
-Застосування configuration:
-
-```bash
 terraform apply
 ```
 
-У результаті Terraform створює всі необхідні AWS resources.
+Конкретні Terraform directories та порядок bootstrap описані нижче та будуть доповнені відповідно до фінальної структури.
 
----
+## 5. Kubernetes
 
-# 8. AWS Lambda ARNs
+Для проєкту використовується один EKS cluster.
 
-Після deployment Terraform повертає ARNs Lambda-функцій.
-
-### Validate Lambda
+Основні namespaces:
 
 ```text
-arn:aws:lambda:eu-north-1:650830975789:function:mlops-training-validate
+staging
+production
+mlops-system
+monitoring
 ```
 
-### Log Metrics Lambda
+### Namespace ownership
+
+| Namespace      | Призначення                                        |
+| -------------- | -------------------------------------------------- |
+| `staging`      | тестування нових model versions                    |
+| `production`   | production inference                               |
+| `mlops-system` | MLOps platform components                          |
+| `monitoring`   | Prometheus, Grafana, Loki та monitoring components |
+
+## 6. GitOps
+
+Усі Kubernetes deployments виконуються через ArgoCD.
+
+Production принцип:
 
 ```text
-arn:aws:lambda:eu-north-1:650830975789:function:mlops-training-log-metrics
+Git repository
+      │
+      ▼
+    ArgoCD
+      │
+      ▼
+ Kubernetes
 ```
 
----
+Ручні `kubectl apply` та `helm install` не використовуються як основний deployment mechanism.
 
-# 9. AWS Step Functions
+Bootstrap-операції, необхідні для створення самого ArgoCD та базової infrastructure, будуть описані в deployment documentation.
 
-Для orchestration використовується AWS Step Functions state machine:
+## 7. MLflow Model Registry
+
+MLflow використовується для:
+
+- tracking training runs;
+- зберігання metrics;
+- зберігання parameters;
+- збереження model artifacts;
+- versioning моделей;
+- управління model lifecycle.
+
+Кожен успішний training run повинен створювати нову model version.
+
+Для кожної версії зберігається metadata:
+
+- Git commit SHA;
+- dataset version/hash;
+- training parameters;
+- evaluation metrics;
+- training run reference.
+
+Lifecycle:
 
 ```text
-MLOpsPipeline
+Training
+   │
+   ▼
+MLflow Run
+   │
+   ▼
+Model Registry
+   │
+   ▼
+Staging
+   │
+   ▼
+Production
 ```
 
-ARN:
+## 8. Model promotion
+
+Нова модель спочатку потрапляє у `Staging`.
+
+Перехід у `Production` виконується окремою контрольованою дією.
+
+Production model може бути замінена на нову version після перевірки:
+
+- model metrics;
+- data quality;
+- deployment health;
+- inference latency;
+- error rate;
+- drift indicators.
+
+Попередня production version повинна залишатися доступною для rollback.
+
+## 9. Model deployment strategy
+
+Для production deployment використовується контрольована deployment strategy.
+
+Обрана стратегія та її trade-offs будуть описані в `ADR.md`.
+
+Deployment повинен забезпечувати:
+
+- одночасне існування старої та нової model version або контрольований traffic split;
+- перевірку нової версії;
+- можливість збільшення traffic;
+- rollback у разі проблем.
+
+## 10. Inference service
+
+ML model надається через REST API на базі FastAPI.
+
+API повинен підтримувати:
+
+- prediction endpoint;
+- input validation;
+- health check;
+- structured logging;
+- Prometheus metrics;
+- meaningful HTTP errors.
+
+Приклад:
 
 ```text
-arn:aws:states:eu-north-1:650830975789:stateMachine:MLOpsPipeline
+POST /predict
+GET  /health
 ```
 
-Workflow виконує Lambda-функції послідовно:
+Model version, яка використовується inference service, повинна бути traceable до MLflow Model Registry.
+
+## 11. Security baseline
+
+Security є частиною deployment lifecycle.
+
+Основні controls:
+
+- input validation;
+- schema enforcement;
+- rate limiting;
+- Kubernetes RBAC;
+- least privilege IAM;
+- secrets management;
+- immutable model artifacts;
+- SHA256 checksum validation;
+- audit logging;
+- container/image scanning;
+- non-root containers;
+- network restrictions;
+- rollback capability.
+
+### Kubernetes RBAC
+
+Передбачені ролі:
 
 ```text
-ValidateData
-     │
-     ▼
-validate.handler
-     │
-     ▼
-LogMetrics
-     │
-     ▼
-log_metrics.handler
+mlops-engineer
+viewer
 ```
 
-Таким чином друга Lambda запускається після завершення першої.
+`mlops-engineer` має повний доступ до staging та обмежений доступ до production.
 
----
+`viewer` має read-only доступ.
 
-# 10. Step Functions Definition
+## 12. Immutable model artifacts
 
-State machine побудована за принципом послідовного виконання:
+Production model artifact повинен мати:
+
+- version;
+- SHA256 checksum;
+- provenance;
+- model registry reference.
+
+Mutable artifacts типу:
 
 ```text
-ValidateData → LogMetrics
+latest.pt
+latest.pkl
+latest.joblib
 ```
 
-Перший state:
+не використовуються як production source of truth.
+
+Перед deployment inference service повинен перевіряти integrity artifact.
+
+## 13. Audit logging
+
+Критичні model lifecycle actions повинні бути traceable.
+
+Зокрема:
+
+- model registration;
+- creation of model version;
+- transition to Staging;
+- transition to Production;
+- archival;
+- deletion;
+- deployment;
+- rollback.
+
+Audit events зберігаються у structured format та доступні через logging infrastructure.
+
+## 14. Observability
+
+Для monitoring використовуються:
+
+- Prometheus;
+- Grafana;
+- Loki;
+- Evidently AI.
+
+### Technical metrics
+
+Потрібно контролювати:
+
+- request rate;
+- latency p50;
+- latency p95;
+- error rate;
+- pod CPU;
+- pod memory.
+
+### Logs
+
+Inference logs повинні бути structured та доступні через Loki.
+
+### Grafana
+
+Grafana використовується як основний monitoring dashboard.
+
+Dashboard повинен дозволяти швидко визначити:
+
+- чи працює inference service;
+- чи зростає latency;
+- чи зростає error rate;
+- чи є проблеми з ресурсами;
+- яка model version обробляє requests.
+
+## 15. Model quality monitoring
+
+Evidently використовується для контролю model/data quality.
+
+Основна задача:
 
 ```text
-ValidateData
+Reference dataset
+        │
+        ▼
+Production data
+        │
+        ▼
+Evidently
+        │
+        ▼
+Drift metrics
+        │
+        ▼
+Prometheus / Grafana
 ```
 
-викликає:
+За наявності drift повинна запускатися documented response procedure.
+
+## 16. CI/CD
+
+GitLab CI/CD використовується для автоматизації ML workflow.
+
+Pipeline повинен забезпечувати:
 
 ```text
-mlops-training-validate
+Git event
+   │
+   ▼
+CI pipeline
+   │
+   ▼
+Training
+   │
+   ▼
+Model registration
+   │
+   ▼
+Staging
 ```
 
-Після успішного завершення workflow переходить до:
+Git context передається між pipeline components для забезпечення traceability.
 
-```text
-LogMetrics
-```
-
-який викликає:
-
-```text
-mlops-training-log-metrics
-```
-
-Після завершення `LogMetrics` workflow завершується.
-
----
-
-# 11. IAM
-
-Для Lambda використовується окрема IAM execution role.
-
-Для Step Functions створена окрема IAM role, яка має permission на виклик обох Lambda-функцій.
-
-Основний permission:
-
-```text
-lambda:InvokeFunction
-```
-
-Це дозволяє Step Functions виконувати Lambda states.
-
-IAM roles створюються автоматично через Terraform.
-
----
-
-# 12. Ручний запуск Step Functions
-
-Перед інтеграцією з GitLab CI workflow було перевірено вручну через AWS CLI.
-
-Команда:
-
-```bash
-aws stepfunctions start-execution \
-  --state-machine-arn "arn:aws:states:eu-north-1:650830975789:stateMachine:MLOpsPipeline" \
-  --name "manual-test-$(date +%s)" \
-  --input '{"source":"manual","commit":"test","branch":"lesson-10"}'
-```
-
-Приклад input:
-
-```json
-{
-  "source": "manual",
-  "commit": "test",
-  "branch": "lesson-10"
-}
-```
-
-Ручний execution був успішно виконаний зі статусом:
-
-```text
-SUCCEEDED
-```
-
-Це підтверджує коректну роботу Step Functions та обох Lambda-функцій.
-
----
-
-# 13. GitLab CI/CD
-
-Для автоматичного запуску AWS workflow використовується окремий приватний GitLab repository:
-
-```text
-mlops-pipeline-10
-```
-
-GitLab pipeline знаходиться у файлі:
-
-```text
-.gitlab-ci.yml
-```
-
-Pipeline має один stage:
-
-```text
-train
-```
-
-та один job:
-
-```text
-train-model
-```
-
----
-
-# 14. GitLab CI configuration
-
-Файл:
-
-```text
-.gitlab-ci.yml
-```
-
-містить:
-
-```yaml
-stages:
-  - train
-
-train-model:
-  stage: train
-  image:
-    name: amazon/aws-cli:2.15.0
-    entrypoint: [""]
-
-  script:
-    - echo "Starting ML pipeline via AWS Step Functions"
-    - |
-      aws stepfunctions start-execution \
-        --state-machine-arn "$STEP_FUNCTION_ARN" \
-        --name "training-${CI_PIPELINE_ID}-${CI_COMMIT_SHORT_SHA}" \
-        --input "{\"source\":\"gitlab-ci\",\"commit\":\"${CI_COMMIT_SHORT_SHA}\",\"branch\":\"${CI_COMMIT_BRANCH}\",\"pipeline_id\":\"${CI_PIPELINE_ID}\"}"
-```
-
-Docker image:
-
-```text
-amazon/aws-cli:2.15.0
-```
-
-Використовується AWS CLI для запуску Step Functions.
-
-Параметр:
-
-```yaml
-entrypoint: [""]
-```
-
-необхідний для того, щоб Docker image не запускав `aws` як власний entrypoint перед виконанням GitLab `script`.
-
----
-
-# 15. GitLab CI → AWS Step Functions
-
-Під час запуску GitLab pipeline виконується:
-
-```bash
-aws stepfunctions start-execution
-```
-
-До AWS передається ARN Step Function:
-
-```text
-$STEP_FUNCTION_ARN
-```
-
-Назва execution формується автоматично:
-
-```text
-training-${CI_PIPELINE_ID}-${CI_COMMIT_SHORT_SHA}
-```
-
-Наприклад:
-
-```text
-training-2824073958-415ae6e1
-```
-
-Це дозволяє ідентифікувати execution за GitLab pipeline та commit.
-
----
-
-# 16. Git-контекст
-
-GitLab CI передає до Step Functions наступний JSON:
-
-```json
-{
-  "source": "gitlab-ci",
-  "commit": "415ae6e1",
-  "branch": "main",
-  "pipeline_id": "2824073958"
-}
-```
-
-Використовуються стандартні GitLab CI variables:
+Основні identifiers:
 
 ```text
 CI_COMMIT_SHORT_SHA
@@ -549,357 +498,156 @@ CI_COMMIT_BRANCH
 CI_PIPELINE_ID
 ```
 
-### Навіщо передавати commit
+## 17. AWS Step Functions
 
-`CI_COMMIT_SHORT_SHA` дозволяє пов'язати запуск training workflow з конкретною версією коду.
+AWS Step Functions використовується як orchestration layer для training workflow.
 
-Наприклад:
-
-```text
-Git commit
-    │
-    ▼
-415ae6e1
-    │
-    ▼
-GitLab Pipeline
-    │
-    ▼
-Step Functions Execution
-```
-
-Це забезпечує traceability запусків training workflow.
-
----
-
-# 17. GitLab CI/CD Variables
-
-AWS credentials та інші конфіденційні значення не зберігаються у `.gitlab-ci.yml`.
-
-У GitLab були створені CI/CD Variables:
+Попередньо реалізований workflow:
 
 ```text
-AWS_ACCESS_KEY_ID
-AWS_SECRET_ACCESS_KEY
-AWS_DEFAULT_REGION
-STEP_FUNCTION_ARN
-```
-
-### AWS_ACCESS_KEY_ID
-
-Містить AWS Access Key ID.
-
-### AWS_SECRET_ACCESS_KEY
-
-Містить AWS Secret Access Key.
-
-Ця variable зберігається як masked secret.
-
-### AWS_DEFAULT_REGION
-
-Значення:
-
-```text
-eu-north-1
-```
-
-### STEP_FUNCTION_ARN
-
-Значення:
-
-```text
-arn:aws:states:eu-north-1:650830975789:stateMachine:MLOpsPipeline
-```
-
-AWS credentials не додаються до Git repository.
-
----
-
-# 18. GitLab pipeline result
-
-Після налаштування CI/CD variables GitLab pipeline був успішно виконаний.
-
-Pipeline:
-
-```text
-2824073958
-```
-
-Commit:
-
-```text
-415ae6e1
-```
-
-GitLab job:
-
-```text
-train-model
-```
-
-Результат:
-
-```text
-Job succeeded
-```
-
-У job log AWS CLI повернув execution ARN:
-
-```text
-arn:aws:states:eu-north-1:650830975789:execution:MLOpsPipeline:training-2824073958-415ae6e1
-```
-
-Також AWS повернув:
-
-```text
-startDate: 2026-09-06T10:17:54.107000+00:00
-```
-
-Це підтверджує, що GitLab CI успішно викликав AWS Step Functions.
-
----
-
-# 19. Повний CI/CD flow
-
-Повний workflow домашнього завдання:
-
-```text
-Developer
-    │
-    ▼
-GitLab repository
-    │
-    ▼
-GitLab CI/CD
-    │
-    │ CI_COMMIT_SHORT_SHA
-    │ CI_COMMIT_BRANCH
-    │ CI_PIPELINE_ID
-    │
-    ▼
-AWS Step Functions
-    │
-    ▼
 ValidateData
-    │
-    ▼
-AWS Lambda
-mlops-training-validate
-    │
-    ▼
+      │
+      ▼
 LogMetrics
-    │
-    ▼
-AWS Lambda
-mlops-training-log-metrics
-    │
-    ▼
-Workflow completed
 ```
 
----
+У фінальному проєкті workflow буде розширено відповідно до повного training та model lifecycle.
 
-# 20. Репозиторії
+## 18. Documentation
 
-## GitHub
+Проєкт містить:
 
-Основний repository:
+### README.md
 
-```text
-eks-vpc-argocd
-```
+Містить:
 
-Homework branch:
+- architecture;
+- repository structure;
+- dependencies;
+- infrastructure deployment;
+- Kubernetes structure;
+- основні компоненти системи.
 
-```text
-lesson-10
-```
+### RUNBOOK.md
 
-У ньому знаходяться:
+Містить operational procedures:
+
+- deploy new model;
+- promote model;
+- rollback;
+- troubleshooting;
+- latency response;
+- error-rate response;
+- drift response;
+- infrastructure cleanup.
+
+### ADR.md
+
+Містить architectural decisions:
+
+- deployment strategy;
+- trade-offs;
+- alternatives;
+- decisions щодо production architecture.
+
+## 19. Deployment from scratch
+
+Фінальна система повинна бути відтворюваною з clean state.
+
+Основний принцип:
 
 ```text
 Terraform
-Lambda
-Step Functions
-IAM
+   │
+   ▼
+AWS infrastructure
+   │
+   ▼
+EKS
+   │
+   ▼
+ArgoCD
+   │
+   ▼
+MLOps services
+   │
+   ▼
+Inference + Monitoring
 ```
 
-## GitLab
+Точний порядок bootstrap та verification commands буде наведений після завершення infrastructure integration.
 
-Окремий приватний repository:
+## 20. Rollback
+
+Rollback повинен виконуватися однією documented action:
 
 ```text
-mlops-pipeline-10
+Production model
+      │
+      ▼
+Previous stable version
 ```
 
-Branch:
+Rollback може бути реалізований через:
 
-```text
-main
-```
+- Git commit;
+- model version change;
+- deployment rollback;
 
-У ньому знаходиться:
+залежно від обраної deployment strategy.
 
-```text
-.gitlab-ci.yml
-```
+## 21. Cost management
 
-GitLab repository використовується для CI/CD інтеграції з AWS Step Functions.
+AWS resources використовуються лише на час роботи та демонстрації проєкту.
 
----
-
-# 21. Перевірка Lambda
-
-Перевірити створені Lambda:
+Після завершення перевірок production infrastructure повинна бути видалена:
 
 ```bash
-aws lambda list-functions \
-  --region eu-north-1 \
-  --profile NatkaMLOps
+terraform destroy
 ```
 
-Очікувані функції:
+Перед cleanup необхідно переконатися, що всі необхідні screenshots та artifacts для submission збережені.
+
+## 22. Definition of Done
+
+Фінальний проєкт вважається завершеним, якщо:
+
+- [ ] infrastructure створюється через Terraform;
+- [ ] EKS cluster працює;
+- [ ] необхідні namespaces створені;
+- [ ] ArgoCD працює;
+- [ ] MLflow працює;
+- [ ] Model Registry працює;
+- [ ] training створює нову model version;
+- [ ] model переходить у Staging;
+- [ ] production promotion працює;
+- [ ] deployment strategy працює;
+- [ ] rollback працює;
+- [ ] FastAPI inference працює;
+- [ ] input validation працює;
+- [ ] rate limiting реалізований;
+- [ ] Kubernetes RBAC налаштований;
+- [ ] model artifacts immutable;
+- [ ] checksum validation реалізована;
+- [ ] audit logging працює;
+- [ ] Prometheus збирає metrics;
+- [ ] Grafana dashboard працює;
+- [ ] Loki отримує inference logs;
+- [ ] model/data drift monitoring реалізований або задокументований відповідно до обраного scope;
+- [ ] README.md завершений;
+- [ ] RUNBOOK.md завершений;
+- [ ] ADR.md завершений;
+- [ ] secrets відсутні в Git repository;
+- [ ] фінальний `terraform destroy` успішний.
+
+## 23. Project status
+
+Фінальний проєкт розвивається на окремій Git-гілці:
 
 ```text
-mlops-training-validate
-mlops-training-log-metrics
+final-project
 ```
 
----
+Гілка базується на завершеному стані попередніх домашніх завдань.
 
-# 22. Перевірка Step Functions
-
-Перевірити state machine:
-
-```bash
-aws stepfunctions list-state-machines \
-  --region eu-north-1 \
-  --profile NatkaMLOps
-```
-
-Очікувана state machine:
-
-```text
-MLOpsPipeline
-```
-
----
-
-# 23. Перевірка Terraform outputs
-
-Після deployment можна перевірити outputs:
-
-```bash
-cd terraform
-
-terraform output
-```
-
-Очікуються:
-
-```text
-validate_lambda_arn
-log_metrics_lambda_arn
-step_function_arn
-```
-
----
-
-# 24. Результат
-
-У результаті домашнього завдання реалізовано інтеграцію:
-
-```text
-GitLab CI
-    ↓
-AWS Step Functions
-    ↓
-AWS Lambda
-    ↓
-Sequential ML workflow
-```
-
-Реалізовані основні вимоги:
-
-- створено дві AWS Lambda-функції;
-- створено ZIP deployment packages;
-- створено IAM roles та permissions;
-- створено AWS Step Functions state machine;
-- реалізовано послідовний workflow `ValidateData → LogMetrics`;
-- Step Functions успішно виконує Lambda;
-- Terraform автоматизує створення AWS infrastructure;
-- створено окремий GitLab CI pipeline;
-- GitLab CI використовує AWS CLI;
-- AWS credentials зберігаються у GitLab CI/CD Variables;
-- Step Function ARN передається через CI/CD variable;
-- GitLab CI передає `CI_COMMIT_SHORT_SHA`;
-- GitLab CI передає `CI_COMMIT_BRANCH`;
-- GitLab CI передає `CI_PIPELINE_ID`;
-- GitLab pipeline успішно запускає AWS Step Functions;
-- execution name містить GitLab pipeline ID та commit SHA;
-- ручний запуск Step Functions успішно завершився зі статусом `SUCCEEDED`.
-
----
-
-# 25. Фінальна структура для здачі
-
-### GitHub — branch `lesson-10`
-
-```text
-eks-vpc-argocd/
-│
-├── terraform/
-│   ├── main.tf
-│   ├── data.tf
-│   ├── terraform.tf
-│   ├── variables.tf
-│   ├── outputs.tf
-│   │
-│   └── lambda/
-│       ├── validate.py
-│       ├── validate.zip
-│       ├── log_metrics.py
-│       └── log_metrics.zip
-│
-└── README.md
-```
-
-### GitLab — branch `main`
-
-```text
-mlops-pipeline-10/
-│
-└── .gitlab-ci.yml
-```
-
----
-
-# 26. Висновок
-
-У рамках домашнього завдання створено повний автоматизований workflow запуску ML training process.
-
-Terraform відповідає за створення AWS infrastructure, AWS Step Functions — за orchestration workflow, Lambda — за виконання окремих етапів, а GitLab CI — за автоматичний запуск workflow.
-
-Git-контекст передається до Step Functions під час кожного запуску, що забезпечує можливість відстежити, з якого commit та якого GitLab pipeline було запущено training workflow.
-
-Фінальна схема:
-
-```text
-GitHub
-  │
-  │ Terraform
-  ▼
-AWS Infrastructure
-  │
-  ├── Lambda Validate
-  ├── Lambda Log Metrics
-  └── Step Functions
-          ▲
-          │
-          │ start-execution
-          │
-      GitLab CI
-          │
-          ▼
-   Git commit / pipeline
-```
+Попередня реалізація ДЗ1–ДЗ10 використовується як foundation та поступово інтегрується у production-oriented MLOps platform.
