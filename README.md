@@ -1,636 +1,905 @@
-# MLOps Homework №4 — MLflow, PushGateway, Prometheus та Grafana
+# MLOps Homework №10 — Інтеграція GitLab CI з AWS Step Functions
 
 ## Опис проєкту
 
-У межах домашнього завдання реалізовано ML/MLOps pipeline для навчання моделей машинного навчання, логування експериментів у MLflow та моніторингу результатів через Prometheus і Grafana.
+У межах домашнього завдання реалізовано автоматизацію запуску ML training workflow за допомогою **GitLab CI/CD**, **AWS Step Functions** та **AWS Lambda**.
 
-Інфраструктура розгортається в Kubernetes-кластері Amazon EKS та керується за допомогою ArgoCD.
+Інфраструктура AWS створюється та керується за допомогою **Terraform**.
 
-Основні компоненти:
+Основна логіка побудована таким чином:
 
-- MLflow Tracking Server;
-- MinIO для зберігання MLflow artifacts;
-- PostgreSQL для backend store MLflow;
-- Prometheus PushGateway;
-- Prometheus;
-- Grafana;
-- Python training script;
-- збереження найкращої моделі у `best_model/`.
+```text
+GitLab CI
+    │
+    │ aws stepfunctions start-execution
+    │
+    ▼
+AWS Step Functions
+    │
+    ├── ValidateData
+    │       │
+    │       ▼
+    │   Lambda: validate
+    │
+    └── LogMetrics
+            │
+            ▼
+        Lambda: log_metrics
+```
+
+GitLab CI передає до Step Functions Git-контекст поточного pipeline:
+
+- `source`;
+- `commit`;
+- `branch`;
+- `pipeline_id`.
+
+Це дозволяє пов'язати конкретний запуск training workflow з версією коду та GitLab pipeline, який його запустив.
 
 ---
 
-## Технології
+# 1. Структура проєкту
 
-- AWS EKS
-- Kubernetes
-- ArgoCD
-- Helm
-- MLflow
-- MinIO
-- PostgreSQL
-- Prometheus
-- Prometheus PushGateway
-- Grafana
-- Python
-- scikit-learn
-- joblib
+Основний GitHub-репозиторій:
 
----
+```text
+eks-vpc-argocd/
+```
 
-## Структура проєкту
+Для цього домашнього завдання використовується гілка:
+
+```text
+lesson-10
+```
+
+Структура Terraform:
 
 ```text
 eks-vpc-argocd/
 │
-├── argocd/
-│   ├── applications/
-│   │   ├── minio.yaml
-│   │   ├── mlflow.yaml
-│   │   ├── postgres.yaml
-│   │   ├── prometheus-operator.yaml
-│   │   ├── prometheus-operator-crds.yaml
-│   │   └── pushgateway.yaml
+└── terraform/
+    ├── main.tf
+    ├── data.tf
+    ├── terraform.tf
+    ├── variables.tf
+    ├── outputs.tf
+    │
+    └── lambda/
+        ├── validate.py
+        ├── validate.zip
+        ├── log_metrics.py
+        └── log_metrics.zip
+```
+
+GitLab CI зберігається в окремому приватному репозиторії:
+
+```text
+mlops-pipeline-10/
+│
+└── .gitlab-ci.yml
+```
+
+GitLab-репозиторій використовується тільки для CI/CD pipeline, який запускає вже створений AWS Step Functions workflow.
+
+---
+
+# 2. Використані технології
+
+- AWS
+- AWS Lambda
+- AWS Step Functions
+- AWS IAM
+- Terraform
+- GitHub
+- GitLab
+- GitLab CI/CD
+- AWS CLI
+- Python
+
+---
+
+# 3. AWS Region
+
+У проєкті використовується AWS region:
+
+```text
+eu-north-1
+```
+
+Terraform variable:
+
+```hcl
+variable "aws_region" {
+  description = "AWS region"
+  type        = string
+  default     = "eu-north-1"
+}
+```
+
+---
+
+# 4. AWS Lambda
+
+У workflow використовуються дві Lambda-функції.
+
+## Validate Lambda
+
+Файл:
+
+```text
+terraform/lambda/validate.py
+```
+
+Код:
+
+```python
+def handler(event, context):
+    print("Validating input data...")
+
+    return {
+        "status": "valid"
+    }
+```
+
+Lambda виконує перевірку вхідних даних та повертає статус:
+
+```json
+{
+  "status": "valid"
+}
+```
+
+---
+
+## Log Metrics Lambda
+
+Файл:
+
+```text
+terraform/lambda/log_metrics.py
+```
+
+Код:
+
+```python
+def handler(event, context):
+    print("Logging metrics...")
+
+    return {
+        "status": "logged"
+    }
+```
+
+Lambda імітує логування metrics та повертає:
+
+```json
+{
+  "status": "logged"
+}
+```
+
+---
+
+# 5. Lambda ZIP packages
+
+Для deployment Lambda використовуються ZIP-архіви:
+
+```text
+terraform/lambda/validate.zip
+terraform/lambda/log_metrics.zip
+```
+
+ZIP-файли створюються командами:
+
+```bash
+cd terraform/lambda
+
+zip validate.zip validate.py
+zip log_metrics.zip log_metrics.py
+```
+
+Таким чином кожна Lambda має окремий deployment package.
+
+---
+
+# 6. Terraform
+
+Terraform використовується для автоматичного створення AWS infrastructure.
+
+Основні Terraform-файли:
+
+```text
+terraform/
+├── main.tf
+├── data.tf
+├── terraform.tf
+├── variables.tf
+└── outputs.tf
+```
+
+Terraform створює:
+
+1. IAM role для Lambda;
+2. IAM policy attachment для Lambda;
+3. Lambda `mlops-training-validate`;
+4. Lambda `mlops-training-log-metrics`;
+5. IAM role для Step Functions;
+6. IAM policy для виклику Lambda з Step Functions;
+7. AWS Step Functions state machine `MLOpsPipeline`.
+
+---
+
+# 7. Terraform deployment
+
+Перед виконанням Terraform необхідно мати налаштований AWS CLI profile.
+
+У цьому проєкті використовується profile:
+
+```text
+NatkaMLOps
+```
+
+Перевірка AWS credentials:
+
+```bash
+aws configure list --profile NatkaMLOps
+```
+
+Перевірка AWS account:
+
+```bash
+aws sts get-caller-identity --profile NatkaMLOps
+```
+
+Перехід у Terraform directory:
+
+```bash
+cd terraform
+```
+
+Ініціалізація Terraform:
+
+```bash
+terraform init
+```
+
+Перевірка configuration:
+
+```bash
+terraform validate
+```
+
+Створення plan:
+
+```bash
+terraform plan
+```
+
+Застосування configuration:
+
+```bash
+terraform apply
+```
+
+У результаті Terraform створює всі необхідні AWS resources.
+
+---
+
+# 8. AWS Lambda ARNs
+
+Після deployment Terraform повертає ARNs Lambda-функцій.
+
+### Validate Lambda
+
+```text
+arn:aws:lambda:eu-north-1:650830975789:function:mlops-training-validate
+```
+
+### Log Metrics Lambda
+
+```text
+arn:aws:lambda:eu-north-1:650830975789:function:mlops-training-log-metrics
+```
+
+---
+
+# 9. AWS Step Functions
+
+Для orchestration використовується AWS Step Functions state machine:
+
+```text
+MLOpsPipeline
+```
+
+ARN:
+
+```text
+arn:aws:states:eu-north-1:650830975789:stateMachine:MLOpsPipeline
+```
+
+Workflow виконує Lambda-функції послідовно:
+
+```text
+ValidateData
+     │
+     ▼
+validate.handler
+     │
+     ▼
+LogMetrics
+     │
+     ▼
+log_metrics.handler
+```
+
+Таким чином друга Lambda запускається після завершення першої.
+
+---
+
+# 10. Step Functions Definition
+
+State machine побудована за принципом послідовного виконання:
+
+```text
+ValidateData → LogMetrics
+```
+
+Перший state:
+
+```text
+ValidateData
+```
+
+викликає:
+
+```text
+mlops-training-validate
+```
+
+Після успішного завершення workflow переходить до:
+
+```text
+LogMetrics
+```
+
+який викликає:
+
+```text
+mlops-training-log-metrics
+```
+
+Після завершення `LogMetrics` workflow завершується.
+
+---
+
+# 11. IAM
+
+Для Lambda використовується окрема IAM execution role.
+
+Для Step Functions створена окрема IAM role, яка має permission на виклик обох Lambda-функцій.
+
+Основний permission:
+
+```text
+lambda:InvokeFunction
+```
+
+Це дозволяє Step Functions виконувати Lambda states.
+
+IAM roles створюються автоматично через Terraform.
+
+---
+
+# 12. Ручний запуск Step Functions
+
+Перед інтеграцією з GitLab CI workflow було перевірено вручну через AWS CLI.
+
+Команда:
+
+```bash
+aws stepfunctions start-execution \
+  --state-machine-arn "arn:aws:states:eu-north-1:650830975789:stateMachine:MLOpsPipeline" \
+  --name "manual-test-$(date +%s)" \
+  --input '{"source":"manual","commit":"test","branch":"lesson-10"}'
+```
+
+Приклад input:
+
+```json
+{
+  "source": "manual",
+  "commit": "test",
+  "branch": "lesson-10"
+}
+```
+
+Ручний execution був успішно виконаний зі статусом:
+
+```text
+SUCCEEDED
+```
+
+Це підтверджує коректну роботу Step Functions та обох Lambda-функцій.
+
+---
+
+# 13. GitLab CI/CD
+
+Для автоматичного запуску AWS workflow використовується окремий приватний GitLab repository:
+
+```text
+mlops-pipeline-10
+```
+
+GitLab pipeline знаходиться у файлі:
+
+```text
+.gitlab-ci.yml
+```
+
+Pipeline має один stage:
+
+```text
+train
+```
+
+та один job:
+
+```text
+train-model
+```
+
+---
+
+# 14. GitLab CI configuration
+
+Файл:
+
+```text
+.gitlab-ci.yml
+```
+
+містить:
+
+```yaml
+stages:
+  - train
+
+train-model:
+  stage: train
+  image:
+    name: amazon/aws-cli:2.15.0
+    entrypoint: [""]
+
+  script:
+    - echo "Starting ML pipeline via AWS Step Functions"
+    - |
+      aws stepfunctions start-execution \
+        --state-machine-arn "$STEP_FUNCTION_ARN" \
+        --name "training-${CI_PIPELINE_ID}-${CI_COMMIT_SHORT_SHA}" \
+        --input "{\"source\":\"gitlab-ci\",\"commit\":\"${CI_COMMIT_SHORT_SHA}\",\"branch\":\"${CI_COMMIT_BRANCH}\",\"pipeline_id\":\"${CI_PIPELINE_ID}\"}"
+```
+
+Docker image:
+
+```text
+amazon/aws-cli:2.15.0
+```
+
+Використовується AWS CLI для запуску Step Functions.
+
+Параметр:
+
+```yaml
+entrypoint: [""]
+```
+
+необхідний для того, щоб Docker image не запускав `aws` як власний entrypoint перед виконанням GitLab `script`.
+
+---
+
+# 15. GitLab CI → AWS Step Functions
+
+Під час запуску GitLab pipeline виконується:
+
+```bash
+aws stepfunctions start-execution
+```
+
+До AWS передається ARN Step Function:
+
+```text
+$STEP_FUNCTION_ARN
+```
+
+Назва execution формується автоматично:
+
+```text
+training-${CI_PIPELINE_ID}-${CI_COMMIT_SHORT_SHA}
+```
+
+Наприклад:
+
+```text
+training-2824073958-415ae6e1
+```
+
+Це дозволяє ідентифікувати execution за GitLab pipeline та commit.
+
+---
+
+# 16. Git-контекст
+
+GitLab CI передає до Step Functions наступний JSON:
+
+```json
+{
+  "source": "gitlab-ci",
+  "commit": "415ae6e1",
+  "branch": "main",
+  "pipeline_id": "2824073958"
+}
+```
+
+Використовуються стандартні GitLab CI variables:
+
+```text
+CI_COMMIT_SHORT_SHA
+CI_COMMIT_BRANCH
+CI_PIPELINE_ID
+```
+
+### Навіщо передавати commit
+
+`CI_COMMIT_SHORT_SHA` дозволяє пов'язати запуск training workflow з конкретною версією коду.
+
+Наприклад:
+
+```text
+Git commit
+    │
+    ▼
+415ae6e1
+    │
+    ▼
+GitLab Pipeline
+    │
+    ▼
+Step Functions Execution
+```
+
+Це забезпечує traceability запусків training workflow.
+
+---
+
+# 17. GitLab CI/CD Variables
+
+AWS credentials та інші конфіденційні значення не зберігаються у `.gitlab-ci.yml`.
+
+У GitLab були створені CI/CD Variables:
+
+```text
+AWS_ACCESS_KEY_ID
+AWS_SECRET_ACCESS_KEY
+AWS_DEFAULT_REGION
+STEP_FUNCTION_ARN
+```
+
+### AWS_ACCESS_KEY_ID
+
+Містить AWS Access Key ID.
+
+### AWS_SECRET_ACCESS_KEY
+
+Містить AWS Secret Access Key.
+
+Ця variable зберігається як masked secret.
+
+### AWS_DEFAULT_REGION
+
+Значення:
+
+```text
+eu-north-1
+```
+
+### STEP_FUNCTION_ARN
+
+Значення:
+
+```text
+arn:aws:states:eu-north-1:650830975789:stateMachine:MLOpsPipeline
+```
+
+AWS credentials не додаються до Git repository.
+
+---
+
+# 18. GitLab pipeline result
+
+Після налаштування CI/CD variables GitLab pipeline був успішно виконаний.
+
+Pipeline:
+
+```text
+2824073958
+```
+
+Commit:
+
+```text
+415ae6e1
+```
+
+GitLab job:
+
+```text
+train-model
+```
+
+Результат:
+
+```text
+Job succeeded
+```
+
+У job log AWS CLI повернув execution ARN:
+
+```text
+arn:aws:states:eu-north-1:650830975789:execution:MLOpsPipeline:training-2824073958-415ae6e1
+```
+
+Також AWS повернув:
+
+```text
+startDate: 2026-09-06T10:17:54.107000+00:00
+```
+
+Це підтверджує, що GitLab CI успішно викликав AWS Step Functions.
+
+---
+
+# 19. Повний CI/CD flow
+
+Повний workflow домашнього завдання:
+
+```text
+Developer
+    │
+    ▼
+GitLab repository
+    │
+    ▼
+GitLab CI/CD
+    │
+    │ CI_COMMIT_SHORT_SHA
+    │ CI_COMMIT_BRANCH
+    │ CI_PIPELINE_ID
+    │
+    ▼
+AWS Step Functions
+    │
+    ▼
+ValidateData
+    │
+    ▼
+AWS Lambda
+mlops-training-validate
+    │
+    ▼
+LogMetrics
+    │
+    ▼
+AWS Lambda
+mlops-training-log-metrics
+    │
+    ▼
+Workflow completed
+```
+
+---
+
+# 20. Репозиторії
+
+## GitHub
+
+Основний repository:
+
+```text
+eks-vpc-argocd
+```
+
+Homework branch:
+
+```text
+lesson-10
+```
+
+У ньому знаходяться:
+
+```text
+Terraform
+Lambda
+Step Functions
+IAM
+```
+
+## GitLab
+
+Окремий приватний repository:
+
+```text
+mlops-pipeline-10
+```
+
+Branch:
+
+```text
+main
+```
+
+У ньому знаходиться:
+
+```text
+.gitlab-ci.yml
+```
+
+GitLab repository використовується для CI/CD інтеграції з AWS Step Functions.
+
+---
+
+# 21. Перевірка Lambda
+
+Перевірити створені Lambda:
+
+```bash
+aws lambda list-functions \
+  --region eu-north-1 \
+  --profile NatkaMLOps
+```
+
+Очікувані функції:
+
+```text
+mlops-training-validate
+mlops-training-log-metrics
+```
+
+---
+
+# 22. Перевірка Step Functions
+
+Перевірити state machine:
+
+```bash
+aws stepfunctions list-state-machines \
+  --region eu-north-1 \
+  --profile NatkaMLOps
+```
+
+Очікувана state machine:
+
+```text
+MLOpsPipeline
+```
+
+---
+
+# 23. Перевірка Terraform outputs
+
+Після deployment можна перевірити outputs:
+
+```bash
+cd terraform
+
+terraform output
+```
+
+Очікуються:
+
+```text
+validate_lambda_arn
+log_metrics_lambda_arn
+step_function_arn
+```
+
+---
+
+# 24. Результат
+
+У результаті домашнього завдання реалізовано інтеграцію:
+
+```text
+GitLab CI
+    ↓
+AWS Step Functions
+    ↓
+AWS Lambda
+    ↓
+Sequential ML workflow
+```
+
+Реалізовані основні вимоги:
+
+- створено дві AWS Lambda-функції;
+- створено ZIP deployment packages;
+- створено IAM roles та permissions;
+- створено AWS Step Functions state machine;
+- реалізовано послідовний workflow `ValidateData → LogMetrics`;
+- Step Functions успішно виконує Lambda;
+- Terraform автоматизує створення AWS infrastructure;
+- створено окремий GitLab CI pipeline;
+- GitLab CI використовує AWS CLI;
+- AWS credentials зберігаються у GitLab CI/CD Variables;
+- Step Function ARN передається через CI/CD variable;
+- GitLab CI передає `CI_COMMIT_SHORT_SHA`;
+- GitLab CI передає `CI_COMMIT_BRANCH`;
+- GitLab CI передає `CI_PIPELINE_ID`;
+- GitLab pipeline успішно запускає AWS Step Functions;
+- execution name містить GitLab pipeline ID та commit SHA;
+- ручний запуск Step Functions успішно завершився зі статусом `SUCCEEDED`.
+
+---
+
+# 25. Фінальна структура для здачі
+
+### GitHub — branch `lesson-10`
+
+```text
+eks-vpc-argocd/
+│
+├── terraform/
+│   ├── main.tf
+│   ├── data.tf
+│   ├── terraform.tf
+│   ├── variables.tf
+│   ├── outputs.tf
 │   │
-│   ├── charts/
-│   │   ├── minio/
-│   │   └── postgresql/
-│   │
-│   └── crds/
-│       └── prometheus-operator/
-│           └── prometheus-operator-crds.yaml
-│
-├── experiments/
-│   ├── train_and_push.py
-│   └── requirements.txt
-│
-├── best_model/
-│   └── best_model.joblib
-│
-├── screens/
-│   ├── 01-mlflow.png
-│   ├── 02-pushgateway.png
-│   ├── 03-prometheus-accuracy.png
-│   ├── 04-prometheus-loss.png
-│   ├── 05-grafana-accuracy.png
-│   └── 06-grafana-loss.png
+│   └── lambda/
+│       ├── validate.py
+│       ├── validate.zip
+│       ├── log_metrics.py
+│       └── log_metrics.zip
 │
 └── README.md
 ```
 
----
-
-# 1. ArgoCD Applications
-
-Для розгортання компонентів використовуються ArgoCD Applications.
-
-Перевірити Applications:
-
-```bash
-kubectl get applications -n infra-tools
-```
-
-Основні Applications:
+### GitLab — branch `main`
 
 ```text
-minio
-mlflow
-postgres
-prometheus-operator
-prometheus-operator-crds
-prometheus-pushgateway
-```
-
-Очікуваний стан основних компонентів:
-
-```text
-Synced
-```
-
-та відповідний `Healthy` status.
-
----
-
-# 2. MLflow Infrastructure
-
-Для MLflow використовується така архітектура:
-
-```text
-                 MLflow
-                   │
-          ┌────────┴────────┐
-          │                 │
-     PostgreSQL           MinIO
-      backend            artifacts
-          │                 │
-          └────────┬────────┘
-                   │
-             MLflow Server
-                :5000
-```
-
-### PostgreSQL
-
-PostgreSQL використовується як backend store для MLflow.
-
-Database:
-
-```text
-mlflow
-```
-
-### MinIO
-
-MinIO використовується для зберігання artifacts.
-
-Bucket:
-
-```text
-mlflow-artifacts
-```
-
-### MLflow Tracking Server
-
-MLflow Tracking Server працює на порту:
-
-```text
-5000
+mlops-pipeline-10/
+│
+└── .gitlab-ci.yml
 ```
 
 ---
 
-# 3. Перевірка MLflow
+# 26. Висновок
 
-Перевірити Service:
+У рамках домашнього завдання створено повний автоматизований workflow запуску ML training process.
 
-```bash
-kubectl get svc -n mlflow
-```
+Terraform відповідає за створення AWS infrastructure, AWS Step Functions — за orchestration workflow, Lambda — за виконання окремих етапів, а GitLab CI — за автоматичний запуск workflow.
 
-Для локального доступу:
+Git-контекст передається до Step Functions під час кожного запуску, що забезпечує можливість відстежити, з якого commit та якого GitLab pipeline було запущено training workflow.
 
-```bash
-kubectl port-forward svc/mlflow 5000:5000 -n mlflow
-```
-
-Після цього відкрити:
+Фінальна схема:
 
 ```text
-http://localhost:5000
+GitHub
+  │
+  │ Terraform
+  ▼
+AWS Infrastructure
+  │
+  ├── Lambda Validate
+  ├── Lambda Log Metrics
+  └── Step Functions
+          ▲
+          │
+          │ start-execution
+          │
+      GitLab CI
+          │
+          ▼
+   Git commit / pipeline
 ```
-
-На MLflow Tracking Server відображаються experiments та runs, створені training script.
-
-### MLflow screenshot
-
-![MLflow](screens/01-mlflow.png)
-
----
-
-# 4. Training Script
-
-Основний training script:
-
-```text
-experiments/train_and_push.py
-```
-
-Скрипт використовує Iris dataset та навчає декілька моделей `LogisticRegression` з різними параметрами.
-
-Для кожного запуску в MLflow логуються:
-
-- model parameters;
-- accuracy;
-- log loss;
-- trained model.
-
-Також для кожного MLflow run генерується `run_id`.
-
----
-
-# 5. Python Dependencies
-
-Залежності знаходяться у:
-
-```text
-experiments/requirements.txt
-```
-
-Встановлення:
-
-```bash
-pip install -r experiments/requirements.txt
-```
-
----
-
-# 6. Запуск Training Script
-
-Перед запуском необхідно переконатися, що MLflow та PushGateway доступні з середовища, де запускається script.
-
-Запуск:
-
-```bash
-python experiments/train_and_push.py
-```
-
-Після виконання script:
-
-1. створює MLflow experiment;
-2. запускає декілька LogisticRegression experiments;
-3. логуються parameters;
-4. логуються metrics;
-5. модель зберігається в MLflow;
-6. `accuracy` та `loss` відправляються до PushGateway;
-7. визначається найкращий результат;
-8. найкраща модель копіюється у `best_model/`.
-
----
-
-# 7. Best Model
-
-Найкраща модель зберігається у:
-
-```text
-best_model/best_model.joblib
-```
-
-Вона вибирається за найвищим значенням `accuracy`.
-
-Перевірити файл:
-
-```bash
-ls -lh best_model/
-```
-
-Очікується:
-
-```text
-best_model.joblib
-```
-
----
-
-# 8. Prometheus PushGateway
-
-PushGateway розгорнутий через ArgoCD у namespace:
-
-```text
-monitoring
-```
-
-Service:
-
-```text
-prometheus-pushgateway
-```
-
-Тип:
-
-```text
-ClusterIP
-```
-
-Port:
-
-```text
-9091
-```
-
-Перевірити:
-
-```bash
-kubectl get svc -n monitoring
-```
-
-Для локального доступу:
-
-```bash
-kubectl port-forward svc/prometheus-pushgateway 9092:9091 -n monitoring
-```
-
-Після цього:
-
-```text
-http://localhost:9092/metrics
-```
-
-У metrics повинні бути:
-
-```text
-mlflow_accuracy
-mlflow_loss
-```
-
-Кожна метрика має label:
-
-```text
-run_id
-```
-
-Приклад:
-
-```text
-mlflow_accuracy{job="mlflow_experiments",run_id="..."} ...
-```
-
-### PushGateway screenshot
-
-![PushGateway](screens/02-pushgateway.png)
-
----
-
-# 9. Prometheus
-
-Prometheus розгорнутий через Prometheus Operator.
-
-Для PushGateway використовується Kubernetes `ServiceMonitor`.
-
-Перевірити ServiceMonitor:
-
-```bash
-kubectl get servicemonitor -A
-```
-
-Очікується:
-
-```text
-monitoring   prometheus-pushgateway
-```
-
-ServiceMonitor дозволяє Prometheus автоматично збирати metrics з PushGateway.
-
----
-
-# 10. Prometheus — mlflow_accuracy
-
-Для перевірки accuracy використовується PromQL:
-
-```promql
-mlflow_accuracy
-```
-
-Метрика містить `run_id`, що дозволяє пов'язати Prometheus metric із конкретним MLflow run.
-
-### Prometheus accuracy
-
-![Prometheus accuracy](screens/03-prometheus-accuracy.png)
-
----
-
-# 11. Prometheus — mlflow_loss
-
-Для перевірки loss використовується:
-
-```promql
-mlflow_loss
-```
-
-### Prometheus loss
-
-![Prometheus loss](screens/04-prometheus-loss.png)
-
----
-
-# 12. Grafana
-
-Grafana використовується для візуалізації Prometheus metrics.
-
-Для локального доступу:
-
-```bash
-kubectl port-forward svc/prometheus-operator-grafana 3000:80 -n infra-tools
-```
-
-Відкрити:
-
-```text
-http://localhost:3000
-```
-
-Для входу використовується користувач `admin` та пароль з Kubernetes Secret:
-
-```bash
-kubectl get secret prometheus-operator-grafana -n infra-tools \
-  -o jsonpath="{.data.admin-password}" | base64 --decode
-echo
-```
-
----
-
-# 13. Grafana Explore — mlflow_accuracy
-
-У Grafana відкрито:
-
-```text
-Explore
-```
-
-Data source:
-
-```text
-Prometheus
-```
-
-PromQL query:
-
-```promql
-mlflow_accuracy
-```
-
-Метрика успішно відображається у Grafana.
-
-### Grafana accuracy
-
-![Grafana accuracy](screens/05-grafana-accuracy.png)
-
----
-
-# 14. Grafana Explore — mlflow_loss
-
-Для перевірки loss використовується:
-
-```promql
-mlflow_loss
-```
-
-Метрика успішно відображається у Grafana.
-
-### Grafana loss
-
-![Grafana loss](screens/06-grafana-loss.png)
-
----
-
-# 15. Перевірка Kubernetes
-
-Перевірити pods:
-
-```bash
-kubectl get pods -A
-```
-
-Перевірити MLflow:
-
-```bash
-kubectl get pods -n mlflow
-```
-
-Перевірити monitoring:
-
-```bash
-kubectl get pods -n monitoring
-```
-
-Перевірити ArgoCD Applications:
-
-```bash
-kubectl get applications -n infra-tools
-```
-
----
-
-# 16. Основні port-forward команди
-
-### MLflow
-
-```bash
-kubectl port-forward svc/mlflow 5000:5000 -n mlflow
-```
-
-URL:
-
-```text
-http://localhost:5000
-```
-
-### PushGateway
-
-```bash
-kubectl port-forward svc/prometheus-pushgateway 9092:9091 -n monitoring
-```
-
-URL:
-
-```text
-http://localhost:9092/metrics
-```
-
-### Grafana
-
-```bash
-kubectl port-forward svc/prometheus-operator-grafana 3000:80 -n infra-tools
-```
-
-URL:
-
-```text
-http://localhost:3000
-```
-
-### Prometheus
-
-Для Prometheus використовується локальний port-forward на порт `9090`.
-
-URL:
-
-```text
-http://localhost:9090
-```
-
----
-
-# 17. Monitoring Flow
-
-Повний flow моніторингу:
-
-```text
-train_and_push.py
-        │
-        ├── MLflow
-        │     ├── parameters
-        │     ├── metrics
-        │     └── model
-        │
-        └── PushGateway
-              │
-              ├── mlflow_accuracy
-              └── mlflow_loss
-                      │
-                      ▼
-                  Prometheus
-                      │
-                      ▼
-                   Grafana
-                    Explore
-```
-
----
-
-# 18. Результат
-
-У результаті домашнього завдання реалізовано повний цикл:
-
-```text
-Model Training
-      ↓
-MLflow Tracking
-      ↓
-Model Artifact
-      ↓
-Best Model
-      ↓
-PushGateway
-      ↓
-Prometheus
-      ↓
-Grafana
-```
-
-Реалізовані вимоги:
-
-- MLflow Tracking Server розгорнутий через ArgoCD;
-- PostgreSQL використовується як MLflow backend store;
-- MinIO використовується для artifacts;
-- створено bucket `mlflow-artifacts`;
-- PostgreSQL database `mlflow`;
-- PushGateway розгорнутий у namespace `monitoring`;
-- PushGateway має ClusterIP service на порту `9091`;
-- training script працює з Iris dataset;
-- LogisticRegression запускається з різними параметрами;
-- parameters та metrics логуються в MLflow;
-- `accuracy` та `loss` відправляються до PushGateway;
-- metrics містять `run_id`;
-- найкраща модель зберігається у `best_model/best_model.joblib`;
-- Prometheus збирає PushGateway metrics;
-- `mlflow_accuracy` перевірено у Prometheus;
-- `mlflow_loss` перевірено у Prometheus;
-- `mlflow_accuracy` перевірено у Grafana Explore;
-- `mlflow_loss` перевірено у Grafana Explore.
-
----
-
-# 19. Screenshots
-
-### MLflow
-
-![MLflow](screens/01-mlflow.png)
-
-### PushGateway
-
-![PushGateway](screens/02-pushgateway.png)
-
-### Prometheus — accuracy
-
-![Prometheus accuracy](screens/03-prometheus-accuracy.png)
-
-### Prometheus — loss
-
-![Prometheus loss](screens/04-prometheus-loss.png)
-
-### Grafana — accuracy
-
-![Grafana accuracy](screens/05-grafana-accuracy.png)
-
-### Grafana — loss
-
-![Grafana loss](screens/06-grafana-loss.png)
