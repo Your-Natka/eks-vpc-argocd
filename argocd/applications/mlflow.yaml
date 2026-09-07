@@ -59,7 +59,9 @@ spec:
 
         extraEnvVars:
           MLFLOW_S3_ENDPOINT_URL: http://minio:9000
-          AWS_DEFAULT_REGION: us-east-1
+          AWS_DEFAULT_REGION: eu-north-1
+          PGHOST: postgres
+          PGPORT: "5432"
 
         resources:
           requests:
