@@ -1,0 +1,54 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: inference-green
+  namespace: production
+  labels:
+    app: inference
+    color: green
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: inference
+      color: green
+  template:
+    metadata:
+      labels:
+        app: inference
+        color: green
+    spec:
+      containers:
+        - name: inference
+          image: 650830975789.dkr.ecr.eu-north-1.amazonaws.com/mlops-inference:v1
+          imagePullPolicy: IfNotPresent
+
+          ports:
+            - name: http
+              containerPort: 8000
+
+          env:
+            - name: MODEL_SHA256
+              value: "446577ee7d7fb0eced219e8b4c4e3d130ba93206258a9041fa8e9e2ddc642abc"
+
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 10
+
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 20
+
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 2Gi

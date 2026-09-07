@@ -1,0 +1,24 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: inference-production
+  namespace: infra-tools
+spec:
+  project: default
+
+  source:
+    repoURL: https://github.com/Your-Natka/eks-vpc-argocd.git
+    targetRevision: final-project
+    path: final/deployment/blue-green
+
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: production
+
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+
+    syncOptions:
+      - CreateNamespace=true
