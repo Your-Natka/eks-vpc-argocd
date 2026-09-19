@@ -22,8 +22,12 @@ spec:
             - name: http
               containerPort: 8000
           env:
-            - name: MODEL_SHA256
-              value: {{ .Values.model.sha256 | quote }}
+            - name: MLFLOW_TRACKING_URI
+              value: {{ .Values.mlflow.trackingUri | quote }}
+            - name: MODEL_NAME
+              value: {{ .Values.mlflow.modelName | quote }}
+            - name: MODEL_ALIAS
+              value: {{ .Values.mlflow.modelAlias | quote }}
           readinessProbe:
             httpGet:
               path: /health

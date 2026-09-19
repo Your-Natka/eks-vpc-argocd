@@ -1,0 +1,95 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mlops-engineer
+  namespace: staging
+rules:
+  - apiGroups: ["", "apps", "batch"]
+    resources: ["pods", "pods/log", "services", "configmaps", "deployments", "jobs", "cronjobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mlops-engineer
+  namespace: staging
+subjects:
+  - kind: Group
+    name: mlops-engineer
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: mlops-engineer
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: mlops-engineer
+  namespace: production
+rules:
+  - apiGroups: ["", "apps"]
+    resources: ["pods", "pods/log", "services", "configmaps", "deployments"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: mlops-engineer
+  namespace: production
+subjects:
+  - kind: Group
+    name: mlops-engineer
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: mlops-engineer
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: viewer
+  namespace: staging
+rules:
+  - apiGroups: ["", "apps", "batch"]
+    resources: ["pods", "pods/log", "services", "configmaps", "deployments", "jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: viewer
+  namespace: staging
+subjects:
+  - kind: Group
+    name: viewer
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: viewer
+  apiGroup: rbac.authorization.k8s.io
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: viewer
+  namespace: production
+rules:
+  - apiGroups: ["", "apps", "batch"]
+    resources: ["pods", "pods/log", "services", "configmaps", "deployments", "jobs", "cronjobs"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: viewer
+  namespace: production
+subjects:
+  - kind: Group
+    name: viewer
+    apiGroup: rbac.authorization.k8s.io
+roleRef:
+  kind: Role
+  name: viewer
+  apiGroup: rbac.authorization.k8s.io

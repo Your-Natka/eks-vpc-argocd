@@ -1,10 +1,16 @@
+import hashlib
+import json
+import logging
 import os
 import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 
 import joblib
 import mlflow
 import mlflow.sklearn
+from mlflow import MlflowClient
 from prometheus_client import CollectorRegistry, Gauge, push_to_gateway
 from sklearn.datasets import load_iris
 from sklearn.linear_model import LogisticRegression
@@ -22,11 +28,73 @@ PUSHGATEWAY_URL = os.getenv(
     "http://localhost:9091",
 )
 
+REGISTERED_MODEL_NAME = "iris-logistic-regression"
+
 BEST_MODEL_DIR = Path("best_model")
 MODELS_DIR = Path("models")
 
 BEST_MODEL_DIR.mkdir(exist_ok=True)
 MODELS_DIR.mkdir(exist_ok=True)
+
+
+def get_git_commit_sha() -> str:
+    value = os.getenv("CI_COMMIT_SHA")
+    if value:
+        return value
+
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            text=True,
+        ).strip()
+    except (subprocess.CalledProcessError, FileNotFoundError):
+        return "unknown"
+
+
+def sha256_path(path: Path) -> str:
+    hasher = hashlib.sha256()
+
+    if path.is_file():
+        hasher.update(path.name.encode())
+        hasher.update(b"\0")
+        hasher.update(path.read_bytes())
+        return hasher.hexdigest()
+
+    for file_path in sorted(p for p in path.rglob("*") if p.is_file()):
+        relative_path = file_path.relative_to(path)
+
+        hasher.update(str(relative_path).encode())
+        hasher.update(b"\0")
+        hasher.update(file_path.read_bytes())
+
+    return hasher.hexdigest()
+
+
+def audit_event(
+    event: str,
+    *,
+    run_id: str,
+    version: str | None = None,
+    status: str = "success",
+    reason: str | None = None,
+) -> None:
+    payload = {
+        "event": event,
+        "model_name": REGISTERED_MODEL_NAME,
+        "run_id": run_id,
+        "version": version,
+        "status": status,
+    }
+
+    if reason:
+        payload["reason"] = reason
+
+    audit_logger.info(
+        json.dumps(
+            payload,
+            separators=(",", ":"),
+        )
+    )
 
 
 def push_metrics(run_id: str, accuracy: float, loss: float) -> None:
@@ -60,9 +128,17 @@ def main() -> None:
     print(f"PushGateway URL: {PUSHGATEWAY_URL}")
 
     mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
-    mlflow.set_experiment("iris-logistic-regression")
+    mlflow.set_experiment(REGISTERED_MODEL_NAME)
+
+    client = MlflowClient()
 
     iris = load_iris()
+
+    dataset_hash = hashlib.sha256(
+        iris.data.tobytes() + iris.target.tobytes()
+    ).hexdigest()
+
+    git_commit_sha = get_git_commit_sha()
 
     X_train, X_test, y_train, y_test = train_test_split(
         iris.data,
@@ -102,10 +178,34 @@ def main() -> None:
             mlflow.log_metric("accuracy", accuracy)
             mlflow.log_metric("loss", loss)
 
+            mlflow.set_tags(
+                {
+                    "git_commit_sha": git_commit_sha,
+                    "dataset_sha256": dataset_hash,
+                    "registered_model_name": REGISTERED_MODEL_NAME,
+                }
+            )
+
             model_path = MODELS_DIR / f"model_{run.info.run_id}.joblib"
             joblib.dump(model, model_path)
 
-            mlflow.log_artifact(str(model_path))
+            mlflow.sklearn.log_model(
+                sk_model=model,
+                name="model",
+                registered_model_name=REGISTERED_MODEL_NAME,
+                input_example=X_train[:1],
+            )
+
+            with tempfile.TemporaryDirectory() as tmp_dir:
+                downloaded_model = mlflow.artifacts.download_artifacts(
+                    run_id=run.info.run_id,
+                    artifact_path="model",
+                    dst_path=tmp_dir,
+                )
+
+                artifact_sha256 = sha256_path(Path(downloaded_model))
+
+            mlflow.set_tag("artifact_sha256", artifact_sha256)
 
             push_metrics(
                 run.info.run_id,
@@ -113,12 +213,71 @@ def main() -> None:
                 loss,
             )
 
+            versions = [
+                version
+                for version in client.search_model_versions(
+                    f"name='{REGISTERED_MODEL_NAME}'"
+                )
+                if version.run_id == run.info.run_id
+            ]
+
+            if versions:
+                model_version = max(
+                    versions,
+                    key=lambda version: int(version.version),
+                )
+
+                client.set_model_version_tag(
+                    REGISTERED_MODEL_NAME,
+                    model_version.version,
+                    "artifact_sha256",
+                    artifact_sha256,
+                )
+
+                client.set_model_version_tag(
+                    REGISTERED_MODEL_NAME,
+                    model_version.version,
+                    "git_commit_sha",
+                    git_commit_sha,
+                )
+
+                client.set_model_version_tag(
+                    REGISTERED_MODEL_NAME,
+                    model_version.version,
+                    "dataset_sha256",
+                    dataset_hash,
+                )
+
+                audit_event(
+                    "model_registered",
+                    run_id=run.info.run_id,
+                    version=model_version.version,
+                )
+
+                client.set_registered_model_alias(
+                    REGISTERED_MODEL_NAME,
+                    "staging",
+                    model_version.version,
+                )
+
+                audit_event(
+                    "model_staged",
+                    run_id=run.info.run_id,
+                    version=model_version.version,
+                )
+
+                print(
+                    f"Registered version {model_version.version} "
+                    f"and assigned alias 'staging'."
+                )
+
             print(
                 f"Run {run.info.run_id}: "
                 f"C={params['C']}, "
                 f"max_iter={params['max_iter']}, "
                 f"accuracy={accuracy:.4f}, "
-                f"loss={loss:.4f}"
+                f"loss={loss:.4f}, "
+                f"artifact_sha256={artifact_sha256}"
             )
 
             if accuracy > best_accuracy:

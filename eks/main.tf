@@ -7,10 +7,19 @@ module "eks" {
 
   endpoint_public_access = true
 
+  cloudwatch_log_group_retention_in_days = 7
+
   vpc_id     = data.terraform_remote_state.vpc.outputs.vpc_id
   subnet_ids = data.terraform_remote_state.vpc.outputs.private_subnets
 
   enable_irsa = true
+
+  create_kms_key = false
+
+  encryption_config = {
+    provider_key_arn = "arn:aws:kms:eu-north-1:650830975789:key/5e0fd76e-016a-4c2f-9659-d0fcbf5a2aa4"
+    resources        = ["secrets"]
+  }
 
   addons = {
     coredns = {
@@ -33,11 +42,25 @@ module "eks" {
     cpu-nodes = {
       name = "cpu-nodes"
 
-      instance_types = ["t3.medium"]
+      instance_types = ["t3.micro"]
 
       min_size     = 1
       max_size     = 1
       desired_size = 1
+
+      labels = {
+        workload = "cpu"
+      }
+    }
+
+    cpu-small = {
+      name = "cpu-small"
+
+      instance_types = ["t3.small"]
+
+      min_size     = 1
+      max_size     = 2
+      desired_size = 2
 
       labels = {
         workload = "cpu"

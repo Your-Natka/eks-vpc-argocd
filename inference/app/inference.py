@@ -2,61 +2,100 @@ import hashlib
 import os
 from pathlib import Path
 
-import torch
-from PIL import Image
-from torchvision.models import MobileNet_V2_Weights
+import mlflow
+import mlflow.sklearn
+import numpy as np
+from mlflow import MlflowClient
 
 
-MODEL_PATH = Path(__file__).resolve().parent.parent / "model" / "model.pt"
+MLFLOW_TRACKING_URI = os.getenv(
+    "MLFLOW_TRACKING_URI",
+    "http://mlflow.mlflow.svc.cluster.local:5000",
+)
 
-EXPECTED_MODEL_SHA256 = os.getenv(
-    "MODEL_SHA256",
-    "446577ee7d7fb0eced219e8b4c4e3d130ba93206258a9041fa8e9e2ddc642abc",
+MODEL_NAME = os.getenv(
+    "MODEL_NAME",
+    "iris-logistic-regression",
+)
+
+MODEL_ALIAS = os.getenv(
+    "MODEL_ALIAS",
+    "production",
 )
 
 
-def calculate_sha256(path: Path) -> str:
-    sha256 = hashlib.sha256()
+def sha256_path(path: Path) -> str:
+    hasher = hashlib.sha256()
 
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            sha256.update(chunk)
+    if path.is_file():
+        hasher.update(path.name.encode())
+        hasher.update(b"\0")
+        hasher.update(path.read_bytes())
+        return hasher.hexdigest()
 
-    return sha256.hexdigest()
+    for file_path in sorted(p for p in path.rglob("*") if p.is_file()):
+        relative_path = file_path.relative_to(path)
 
+        hasher.update(str(relative_path).encode())
+        hasher.update(b"\0")
+        hasher.update(file_path.read_bytes())
 
-actual_sha256 = calculate_sha256(MODEL_PATH)
-
-if actual_sha256 != EXPECTED_MODEL_SHA256:
-    raise RuntimeError("Model checksum verification failed")
-
-
-weights = MobileNet_V2_Weights.DEFAULT
-preprocess = weights.transforms()
-
-model = torch.jit.load(MODEL_PATH, map_location="cpu")
-model.eval()
+    return hasher.hexdigest()
 
 
-def predict_image(image: Image.Image) -> list[dict]:
-    image = image.convert("RGB")
+def load_verified_model():
+    mlflow.set_tracking_uri(MLFLOW_TRACKING_URI)
 
-    tensor = preprocess(image).unsqueeze(0)
+    client = MlflowClient()
 
-    with torch.no_grad():
-        output = model(tensor)
+    model_version = client.get_model_version_by_alias(
+        MODEL_NAME,
+        MODEL_ALIAS,
+    )
 
-    probabilities = torch.nn.functional.softmax(output[0], dim=0)
-    top3 = torch.topk(probabilities, 3)
+    expected_sha256 = model_version.tags.get("artifact_sha256")
 
-    predictions = []
-
-    for score, class_id in zip(top3.values, top3.indices):
-        predictions.append(
-            {
-                "class_id": class_id.item(),
-                "confidence": round(score.item(), 4),
-            }
+    if not expected_sha256:
+        raise RuntimeError(
+            "Production model does not contain artifact_sha256 metadata."
         )
 
-    return predictions
+    downloaded_model = mlflow.artifacts.download_artifacts(
+        artifact_uri=model_version.source,
+    )
+
+    actual_sha256 = sha256_path(Path(downloaded_model))
+
+    if actual_sha256 != expected_sha256:
+        raise RuntimeError(
+            "Model artifact checksum validation failed."
+        )
+
+    print(
+        f"Verified model {MODEL_NAME} "
+        f"version {model_version.version} "
+        f"with SHA256 {actual_sha256}"
+    )
+
+    return mlflow.sklearn.load_model(downloaded_model)
+
+
+model = load_verified_model()
+
+
+def predict_iris(features: list[float]) -> dict:
+    if len(features) != 4:
+        raise ValueError("Exactly 4 features are required")
+
+    data = np.array([features], dtype=float)
+
+    prediction = model.predict(data)[0]
+    probabilities = model.predict_proba(data)[0]
+
+    return {
+        "predicted_class": int(prediction),
+        "probabilities": [
+            round(float(probability), 6)
+            for probability in probabilities
+        ],
+    }

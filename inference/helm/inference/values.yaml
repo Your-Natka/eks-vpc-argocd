@@ -9,8 +9,10 @@ service:
   type: ClusterIP
   port: 8000
 
-model:
-  sha256: "446577ee7d7fb0eced219e8b4c4e3d130ba93206258a9041fa8e9e2ddc642abc"
+mlflow:
+  trackingUri: "http://mlflow.mlflow.svc.cluster.local:5000"
+  modelName: "iris-logistic-regression"
+  modelAlias: "production"
 
 resources:
   requests:

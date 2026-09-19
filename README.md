@@ -1,653 +1,964 @@
-# MLOps Production Platform
+MLOps Production Platform
 
-## Опис проєкту
+Опис проєкту
 
-Цей проєкт реалізує production-oriented MLOps platform для автоматизованого навчання, реєстрації, контрольованого розгортання та моніторингу ML-моделей.
+Цей проєкт реалізує production-oriented MLOps platform для автоматизованого навчання, реєстрації, контрольованого розгортання та моніторингу ML-моделі.
 
-Платформа об'єднує компоненти, реалізовані в попередніх домашніх завданнях, та розширює їх до повного end-to-end workflow.
+Платформа об'єднує напрацювання попередніх домашніх завдань та розширює їх компонентами Model Registry, deployment strategy, security baseline та observability.
 
-Основний pipeline:
+Основний workflow:
 
-```text
 Git commit / scheduled trigger
-            │
-            ▼
-       GitLab CI/CD
-            │
-            ▼
-   AWS Step Functions
-            │
-            ▼
-      Training workflow
-            │
-            ▼
-      MLflow Tracking
-            │
-            ▼
-    MLflow Model Registry
-            │
-      ┌─────┴─────┐
-      │           │
-   Staging    Production
-                  │
-                  ▼
-             Kubernetes
-                  │
-          ┌───────┴───────┐
-          │               │
-       Inference       Monitoring
-          │               │
-       FastAPI       Prometheus
-          │            Grafana
-          │             Loki
-          │           Evidently
-          ▼
-       Predictions
-```
+│
+▼
+GitLab CI/CD
+│
+▼
+Training workflow
+│
+▼
+MLflow Tracking
+│
+▼
+MLflow Model Registry
+│
+┌────┴────┐
+▼ ▼
+Staging Production
+│
+▼
+Kubernetes
+│
+┌─────┴─────┐
+▼ ▼
+FastAPI Monitoring
+│
+┌──────────┼──────────┐
+▼ ▼ ▼
+Prometheus Loki Evidently
+│ │ │
+└──────────┴──────────┘
+▼
+Grafana
 
-## 1. Цілі проєкту
+1. Цілі проєкту
 
 Платформа повинна забезпечувати:
 
-- автоматизований запуск training workflow;
-- traceability між Git commit, pipeline, training run та model version;
-- реєстрацію моделей у MLflow Model Registry;
-- контрольований перехід моделей `Staging → Production`;
-- безпечне розгортання моделей у Kubernetes;
-- можливість rollback;
-- технічний та model-level monitoring;
-- базовий security baseline;
-- GitOps deployment через ArgoCD;
-- відтворюване створення інфраструктури через Terraform;
-- документацію для deployment та support.
+автоматизований запуск training workflow;
 
-## 2. Architecture
+traceability між Git context, pipeline, training run та model version;
 
-Основні компоненти платформи:
+реєстрацію моделей у MLflow Model Registry;
 
-- AWS VPC;
-- AWS EKS;
-- AWS S3;
-- AWS IAM;
-- AWS ECR;
-- AWS Step Functions;
-- AWS Lambda;
-- Terraform;
-- Kubernetes;
-- Helm;
-- ArgoCD;
-- MLflow;
-- PostgreSQL;
-- MinIO / S3-compatible artifact storage;
-- Prometheus;
-- Grafana;
-- Loki;
-- Evidently AI;
-- FastAPI;
-- Docker;
-- GitLab CI/CD.
+контрольований перехід моделі у Staging та Production;
 
-### High-level architecture
+безпечне розгортання моделі у Kubernetes;
 
-```text
-                    Git
-                     │
-                     ▼
-              GitLab CI/CD
-                     │
-                     ▼
-             AWS Step Functions
-                     │
-                     ▼
-              Training workflow
-                     │
-          ┌──────────┴──────────┐
-          │                     │
-          ▼                     ▼
-    MLflow Tracking        Model artifacts
-          │                     │
-          └──────────┬──────────┘
-                     ▼
-            MLflow Model Registry
-                     │
-              Staging / Production
-                     │
-                     ▼
-                   ECR
-                     │
-                     ▼
-                  ArgoCD
-                     │
-                     ▼
-                  EKS
-             ┌───────┴────────┐
-             │                │
-          Staging         Production
-             │                │
-             └───────┬────────┘
-                     ▼
-               FastAPI model
-                     │
-          ┌──────────┼──────────┐
-          ▼          ▼          ▼
-     Prometheus    Loki      Evidently
-          │          │          │
-          └──────────┼──────────┘
-                     ▼
-                  Grafana
-```
+Blue-Green deployment та rollback;
 
-## 3. Repository structure
+технічний та model-level monitoring;
 
-```text
+базовий security baseline;
+
+GitOps deployment через ArgoCD;
+
+відтворювану інфраструктуру через Terraform;
+
+документацію для deployment та support.
+
+2. Architecture
+
+Основні компоненти
+
+AWS VPC;
+
+AWS EKS;
+
+AWS ECR;
+
+AWS S3 / S3-compatible storage;
+
+AWS IAM;
+
+AWS Step Functions;
+
+AWS Lambda;
+
+Terraform;
+
+Kubernetes;
+
+Helm;
+
+ArgoCD;
+
+MLflow;
+
+PostgreSQL;
+
+MinIO / S3-compatible artifact storage;
+
+Prometheus;
+
+Grafana;
+
+Loki;
+
+Grafana Alloy;
+
+Evidently AI;
+
+FastAPI;
+
+Docker;
+
+GitLab CI/CD.
+
+High-level architecture
+
+                         Git
+                          │
+                          ▼
+                    GitLab CI/CD
+                          │
+                          ▼
+                 Training / orchestration
+                          │
+                          ▼
+                   MLflow Tracking
+                          │
+                          ▼
+                MLflow Model Registry
+                          │
+                 staging / production
+                          │
+                          ▼
+                     FastAPI
+                          │
+             ┌────────────┼────────────┐
+             ▼            ▼            ▼
+        Prometheus       Loki       Evidently
+             │            │            │
+             └────────────┼────────────┘
+                          ▼
+                       Grafana
+
+3. Final model architecture
+
+Початкова inference-служба ДЗ №1 використовувала MobileNetV2 та image upload. У фінальному проєкті inference-контракт уніфіковано з training pipeline і MLflow Registry.
+
+Фінальна модель:
+
+iris-logistic-regression
+
+Production model URI:
+
+models:/iris-logistic-regression@production
+
+API приймає чотири числові Iris features.
+
+Приклад:
+
+{
+"features": [5.1, 3.5, 1.4, 0.2]
+}
+
+4. Repository structure
+
 eks-vpc-argocd/
-│
 ├── README.md
 ├── RUNBOOK.md
 ├── ADR.md
-│
 ├── vpc/
-│
 ├── eks/
-│
 ├── terraform/
-│   └── ...
-│
 ├── argocd/
-│   ├── applications/
-│   ├── charts/
-│   └── crds/
-│
+│ ├── applications/
+│ ├── charts/
+│ └── crds/
 ├── experiments/
-│   ├── requirements.txt
-│   └── train_and_push.py
-│
+│ ├── requirements.txt
+│ └── train_and_push.py
+├── monitoring/
+│ └── evidently/
+├── inference/
+│ ├── Dockerfile
+│ ├── requirements.txt
+│ ├── app/
+│ └── helm/
+├── final/
+│ ├── deployment/
+│ │ └── blue-green/
+│ └── register_model.py
 ├── models/
-│
 ├── best_model/
-│
-├── screens/
-│
-└── ...
-```
+└── screens/
 
-Структура буде розширюватися відповідно до реалізації фінального проєкту.
+5. Infrastructure
 
-## 4. Infrastructure
+AWS infrastructure створюється через Terraform.
 
-AWS infrastructure створюється та керується Terraform.
+Базовий workflow:
 
-Основні компоненти:
-
-- VPC;
-- EKS cluster;
-- Kubernetes node groups;
-- IAM roles;
-- S3;
-- ECR;
-- Step Functions;
-- Lambda;
-- необхідні security та access policies.
-
-Deployment infrastructure повинен бути відтворюваним з чистого стану.
-
-### Terraform workflow
-
-```bash
 terraform init
 terraform validate
 terraform plan
 terraform apply
-```
 
-Конкретні Terraform directories та порядок bootstrap описані нижче та будуть доповнені відповідно до фінальної структури.
+Після завершення роботи:
 
-## 5. Kubernetes
+terraform destroy
 
-Для проєкту використовується один EKS cluster.
+У поточній submission-версії фактична повторна AWS verification заблокована через закриття AWS account.
 
-Основні namespaces:
+6. Kubernetes
 
-```text
+Передбачені namespaces:
+
 staging
 production
-mlops-system
+mlflow
 monitoring
-```
+infra-tools
+loki
+alloy
 
-### Namespace ownership
+Production inference має:
 
-| Namespace      | Призначення                                        |
-| -------------- | -------------------------------------------------- |
-| `staging`      | тестування нових model versions                    |
-| `production`   | production inference                               |
-| `mlops-system` | MLOps platform components                          |
-| `monitoring`   | Prometheus, Grafana, Loki та monitoring components |
+Blue deployment;
 
-## 6. GitOps
+Green deployment;
 
-Усі Kubernetes deployments виконуються через ArgoCD.
+ClusterIP Service;
 
-Production принцип:
+ResourceQuota;
 
-```text
+NetworkPolicy;
+
+dedicated ServiceAccount;
+
+RBAC baseline;
+
+securityContext.
+
+7. GitOps
+
+Основним deployment mechanism є ArgoCD.
+
 Git repository
-      │
-      ▼
-    ArgoCD
-      │
-      ▼
- Kubernetes
-```
+│
+▼
+ArgoCD
+│
+▼
+Kubernetes
 
-Ручні `kubectl apply` та `helm install` не використовуються як основний deployment mechanism.
+Production Application:
 
-Bootstrap-операції, необхідні для створення самого ArgoCD та базової infrastructure, будуть описані в deployment documentation.
+argocd/applications/inference-production.yaml
 
-## 7. MLflow Model Registry
+Application синхронізує:
 
-MLflow використовується для:
+final/deployment/blue-green
 
-- tracking training runs;
-- зберігання metrics;
-- зберігання parameters;
-- збереження model artifacts;
-- versioning моделей;
-- управління model lifecycle.
+8. MLflow Model Registry
 
-Кожен успішний training run повинен створювати нову model version.
+Training pipeline:
 
-Для кожної версії зберігається metadata:
+experiments/train_and_push.py
 
-- Git commit SHA;
-- dataset version/hash;
-- training parameters;
-- evaluation metrics;
-- training run reference.
+Training:
 
-Lifecycle:
+використовує Iris dataset;
 
-```text
+тренує кілька LogisticRegression configurations;
+
+записує parameters;
+
+записує accuracy та log loss;
+
+логую model як MLflow model;
+
+створює нову model version у Registry;
+
+визначає найкращу модель;
+
+записує Prometheus metrics через PushGateway.
+
+Registry model:
+
+iris-logistic-regression
+
+Під час розробки було створено versions 1–6.
+
+Найкращий run:
+
+run: a511ed53aea84e56b79c59186ead56c2
+accuracy: 1.0000
+C: 10.0
+max_iter: 100
+
+Version 5 була призначена aliases:
+
+staging
+production
+
+9. Model promotion
+
+Фінальний lifecycle:
+
 Training
-   │
-   ▼
+│
+▼
 MLflow Run
-   │
-   ▼
+│
+▼
 Model Registry
-   │
-   ▼
-Staging
-   │
-   ▼
-Production
-```
+│
+▼
+staging alias
+│
+▼
+production alias
 
-## 8. Model promotion
+Production inference використовує alias, а не hard-coded version number:
 
-Нова модель спочатку потрапляє у `Staging`.
+models:/iris-logistic-regression@production
 
-Перехід у `Production` виконується окремою контрольованою дією.
+Це дозволяє перемикати production model без зміни application code.
 
-Production model може бути замінена на нову version після перевірки:
+10. Blue-Green deployment
 
-- model metrics;
-- data quality;
-- deployment health;
-- inference latency;
-- error rate;
-- drift indicators.
+Обрана deployment strategy — Blue-Green.
 
-Попередня production version повинна залишатися доступною для rollback.
+Реалізація:
 
-## 9. Model deployment strategy
+final/deployment/blue-green/
+├── namespace.yaml
+├── blue.yaml
+├── green.yaml
+├── service.yaml
+├── serviceaccount.yaml
+├── resourcequota.yaml
+├── networkpolicy.yaml
+└── rbac.yaml
 
-Для production deployment використовується контрольована deployment strategy.
+Service selector визначає активний колір:
 
-Обрана стратегія та її trade-offs будуть описані в `ADR.md`.
+selector:
+app: inference
+color: blue
 
-Deployment повинен забезпечувати:
+Для перемикання на Green selector змінюється на:
 
-- одночасне існування старої та нової model version або контрольований traffic split;
-- перевірку нової версії;
-- можливість збільшення traffic;
-- rollback у разі проблем.
+selector:
+app: inference
+color: green
 
-## 10. Inference service
+11. Inference service
 
-ML model надається через REST API на базі FastAPI.
+FastAPI application:
 
-API повинен підтримувати:
+inference/app/main.py
+inference/app/inference.py
 
-- prediction endpoint;
-- input validation;
-- health check;
-- structured logging;
-- Prometheus metrics;
-- meaningful HTTP errors.
+Endpoints:
 
-Приклад:
-
-```text
+GET /health
 POST /predict
-GET  /health
-```
+GET /metrics
 
-Model version, яка використовується inference service, повинна бути traceable до MLflow Model Registry.
+Input validation:
 
-## 11. Security baseline
+рівно 4 features;
 
-Security є частиною deployment lifecycle.
+кожна feature у межах 0–10.
 
-Основні controls:
+Rate limiting:
 
-- input validation;
-- schema enforcement;
-- rate limiting;
-- Kubernetes RBAC;
-- least privilege IAM;
-- secrets management;
-- immutable model artifacts;
-- SHA256 checksum validation;
-- audit logging;
-- container/image scanning;
-- non-root containers;
-- network restrictions;
-- rollback capability.
+30 requests / 60 seconds / client IP
 
-### Kubernetes RBAC
+Помилки:
 
-Передбачені ролі:
+400 invalid input
+429 rate limit exceeded
+500 internal inference error
 
-```text
-mlops-engineer
-viewer
-```
+Audit middleware записує structured JSON events у stdout.
 
-`mlops-engineer` має повний доступ до staging та обмежений доступ до production.
+12. Security baseline
 
-`viewer` має read-only доступ.
+Production inference має:
 
-## 12. Immutable model artifacts
+non-root container;
 
-Production model artifact повинен мати:
+RuntimeDefault seccomp profile;
 
-- version;
-- SHA256 checksum;
-- provenance;
-- model registry reference.
+allowPrivilegeEscalation: false;
 
-Mutable artifacts типу:
+dropped Linux capabilities;
 
-```text
+readOnlyRootFilesystem: true;
+
+writable /tmp через emptyDir;
+
+dedicated ServiceAccount;
+
+disabled automatic ServiceAccount token mounting;
+
+NetworkPolicy;
+
+ResourceQuota;
+
+input validation;
+
+rate limiting.
+
+Kubernetes RBAC
+
+Для ServiceAccount inference описаний мінімальний Role/RoleBinding baseline для читання model metadata ConfigMap.
+
+13. Immutable model artifacts
+
+Production source of truth — MLflow Model Registry version + alias.
+
+Не використовуються як source of truth:
+
 latest.pt
 latest.pkl
 latest.joblib
-```
 
-не використовуються як production source of truth.
+Кожна model version пов'язана з конкретним MLflow run.
 
-Перед deployment inference service повинен перевіряти integrity artifact.
+14. Audit logging
 
-## 13. Audit logging
+Inference service записує structured request audit events з полями:
 
-Критичні model lifecycle actions повинні бути traceable.
+event;
 
-Зокрема:
+HTTP method;
 
-- model registration;
-- creation of model version;
-- transition to Staging;
-- transition to Production;
-- archival;
-- deletion;
-- deployment;
-- rollback.
+path;
 
-Audit events зберігаються у structured format та доступні через logging infrastructure.
+status;
 
-## 14. Observability
+client IP;
 
-Для monitoring використовуються:
+duration.
 
-- Prometheus;
-- Grafana;
-- Loki;
-- Evidently AI.
+Логи призначені для подальшого збору Grafana Alloy та зберігання в Loki.
 
-### Technical metrics
+15. Observability
 
-Потрібно контролювати:
+Prometheus
+
+Inference service експонує:
+
+inference_requests_total
+inference_request_latency_seconds
+
+Також у попередньому середовищі використовувався PushGateway для training metrics:
+
+mlflow_accuracy
+mlflow_loss
+
+Grafana
+
+Grafana використовується для dashboards та Prometheus exploration.
+
+Loki
+
+Для фінального проєкту підготовлено ArgoCD Application для Loki:
+
+argocd/applications/loki.yaml
+
+Grafana Alloy
+
+Підготовлено ArgoCD Application для збору Kubernetes logs:
+
+argocd/applications/alloy.yaml
+
+Alloy forwarding направлений до Loki.
+
+16. Model quality monitoring
+
+Підготовлено Evidently workflow:
+
+monitoring/evidently/evaluate_drift.py
+
+Workflow порівнює:
+
+reference dataset
+│
+▼
+current dataset
+│
+▼
+Evidently
+│
+┌────┴────┐
+▼ ▼
+data drift prediction drift
+
+Скрипт генерує HTML drift report.
+
+Синтаксис скрипта локально перевірений через py_compile.
+
+Повторна runtime verification у AWS після закриття account неможлива.
+
+17. CI/CD
+
+GitLab CI використовувався для запуску training workflow через Step Functions.
+
+Traceability identifiers:
+
+CI_COMMIT_SHORT_SHA
+CI_COMMIT_BRANCH
+CI_PIPELINE_ID
+
+Раніше успішно перевірений workflow:
+
+GitLab CI
+│
+▼
+AWS Step Functions
+│
+├── ValidateData
+│
+└── LogMetrics
+
+Фінальна model registration/promotion логіка реалізована в repository; повторна AWS runtime verification зараз недоступна.
+
+18. Документація
+
+Проєкт містить три основні документи:
+
+README.md
+
+Опис архітектури, компонентів, repository structure та deployment approach.
+
+RUNBOOK.md
+
+Operational procedures для model promotion, rollback, monitoring та troubleshooting.
+
+ADR.md
+
+Architecture Decision Records з поясненням ключових рішень.
+
+19. Розгортання
+
+Очікуваний порядок:
+
+Terraform
+↓
+AWS infrastructure
+↓
+EKS
+↓
+ArgoCD
+↓
+MLflow / PostgreSQL / MinIO
+↓
+Prometheus / Grafana / Loki / Alloy
+↓
+Inference
+↓
+Blue-Green
+
+Основний Terraform lifecycle:
+
+terraform init
+terraform validate
+terraform plan
+terraform apply
+
+20. Rollback
+
+Rollback можливий двома незалежними способами:
+
+Перемістити MLflow production alias на попередню stable version.
+
+Перемкнути Kubernetes Service selector з blue на green або навпаки.
+
+Детальні operational steps наведені у RUNBOOK.md.
+
+21. Cost management
+
+Для AWS рекомендований патерн:
+
+terraform apply
+↓
+work / demo / screenshots
+↓
+terraform destroy
+
+Поточна фінальна AWS verification не виконана через блокування account.
+
+22. Визначення готовності
+
+Реалізовано / підготовлено
+
+Terraform infrastructure code
+
+EKS/VPC code foundation
+
+ArgoCD Applications
+
+MLflow Tracking
+
+MLflow Model Registry
+
+model versions
+
+staging alias
+
+production alias
+
+FastAPI inference
+
+input validation
+
+rate limiting
+
+health checks
+
+Prometheus metrics
+
+audit logging middleware
+
+non-root container
+
+Kubernetes securityContext
+
+ServiceAccount baseline
+
+NetworkPolicy
+
+ResourceQuota
+
+RBAC manifests
+
+Blue-Green manifests
+
+Loki ArgoCD manifest
+
+Alloy ArgoCD manifest
+
+Evidently drift script
+
+README
+
+RUNBOOK
+
+ADR
+
+Не підтверджено після блокування AWS
+
+final EKS runtime verification
+
+final production Blue-Green switch in the live cluster
+
+live Loki verification
+
+live Evidently execution in cluster
+
+final end-to-end CI/CD runtime verification
+
+final terraform destroy on the final environment
+
+23. Статус проєкту
+
+Branch:
+
+final-project
+
+Під час розробки була успішно перевірена значна частина AWS/EKS stack, включаючи MLflow, PostgreSQL, MinIO, FastAPI inference та PushGateway.
+
+AWS account був закритий після вичерпання Free Tier credits до повторної фінальної runtime verification. Через це останній production verification не був виконаний.
+
+Це є зовнішнім infrastructure blocker, а не відсутністю реалізації repository-side компонентів.
+
+24. Previously verified local / development access
+
+MLflow
+
+kubectl port-forward -n mlflow svc/mlflow 5000:5000
+
+UI:
+
+http://localhost:5000/
+
+PushGateway
+
+kubectl port-forward -n monitoring svc/prometheus-pushgateway 9091:9091
+
+UI:
+
+http://localhost:9091/
+
+FastAPI
+
+cd inference
+python3 -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+Swagger:
+
+http://127.0.0.1:8000/docs
+
+Health:
+
+http://127.0.0.1:8000/health
+
+25. Примітка щодо подання
+
+Цей репозиторій містить реалізовану фінальну архітектуру MLOps та конфігурацію для production середовища.
+
+Остаточну перевірку в AWS не вдалося завершити, оскільки обліковий запис AWS став недоступним перед етапом фінальної інтеграції. Зроблені раніше скріншоти та результати успішних запусків на етапі розробки збережено як підтвердження; screens додані разом із цим репозиторієм.
+
+## Grafana inference dashboard
+
+Фінальний dashboard зберігається як код у:
+
+`monitoring/grafana/inference-dashboard.json`
+
+Dashboard призначений для production inference service та містить:
 
 - request rate;
 - latency p50;
 - latency p95;
 - error rate;
 - pod CPU;
-- pod memory.
+- pod memory;
+- розподіл HTTP requests за status code.
 
-### Logs
+Kubernetes ConfigMap для GitOps:
 
-Inference logs повинні бути structured та доступні через Loki.
+`argocd/applications/grafana-dashboard.yaml`
 
-### Grafana
+Dashboard розрахований на Prometheus datasource і оновлення кожні 15 секунд.
 
-Grafana використовується як основний monitoring dashboard.
+## 24. Final implementation status
 
-Dashboard повинен дозволяти швидко визначити:
+На фінальному етапі проєкту реалізовано та закодовано додаткові production-oriented компоненти.
 
-- чи працює inference service;
-- чи зростає latency;
-- чи зростає error rate;
-- чи є проблеми з ресурсами;
-- яка model version обробляє requests.
+### Kubernetes namespaces
 
-## 15. Model quality monitoring
+У GitOps-репозиторії явно визначені чотири основні namespaces:
 
-Evidently використовується для контролю model/data quality.
+| Namespace      | Призначення                                        |
+| -------------- | -------------------------------------------------- |
+| `staging`      | тестування та перевірка нових версій моделей       |
+| `production`   | production inference service                       |
+| `mlops-system` | системні компоненти MLOps-платформи                |
+| `monitoring`   | Prometheus, Grafana, Loki та monitoring components |
 
-Основна задача:
+Namespace manifests знаходяться у:
 
 ```text
-Reference dataset
-        │
-        ▼
-Production data
-        │
-        ▼
-Evidently
-        │
-        ▼
-Drift metrics
-        │
-        ▼
-Prometheus / Grafana
+final/namespaces/namespaces.yaml
 ```
 
-За наявності drift повинна запускатися documented response procedure.
-
-## 16. CI/CD
-
-GitLab CI/CD використовується для автоматизації ML workflow.
-
-Pipeline повинен забезпечувати:
+ArgoCD Application:
 
 ```text
-Git event
-   │
-   ▼
-CI pipeline
-   │
-   ▼
-Training
-   │
-   ▼
-Model registration
-   │
-   ▼
-Staging
+argocd/applications/namespaces.yaml
 ```
 
-Git context передається між pipeline components для забезпечення traceability.
+### Grafana inference dashboard
 
-Основні identifiers:
+Фінальний dashboard зберігається як version-controlled artifact:
 
 ```text
-CI_COMMIT_SHORT_SHA
-CI_COMMIT_BRANCH
-CI_PIPELINE_ID
+monitoring/grafana/inference-dashboard.json
 ```
 
-## 17. AWS Step Functions
-
-AWS Step Functions використовується як orchestration layer для training workflow.
-
-Попередньо реалізований workflow:
+GitOps ConfigMap:
 
 ```text
-ValidateData
-      │
-      ▼
-LogMetrics
+argocd/applications/grafana-dashboard.yaml
 ```
 
-У фінальному проєкті workflow буде розширено відповідно до повного training та model lifecycle.
+Dashboard містить:
 
-## 18. Documentation
+- request rate;
+- latency p50;
+- latency p95;
+- error rate;
+- pod CPU;
+- pod memory;
+- HTTP requests by status code.
 
-Проєкт містить:
+Оновлення dashboard передбачене кожні 15 секунд.
 
-### README.md
+### Model Registry audit logging
 
-Містить:
+Training pipeline генерує structured audit events для:
 
-- architecture;
-- repository structure;
-- dependencies;
-- infrastructure deployment;
-- Kubernetes structure;
-- основні компоненти системи.
+- реєстрації нової model version;
+- переходу моделі до `Staging`.
 
-### RUNBOOK.md
+Promotion script генерує structured events для:
 
-Містить operational procedures:
+- переходу до `Production`;
+- збереження попередньої production version як archived;
+- видалення model version;
+- помилок promotion operation.
 
-- deploy new model;
-- promote model;
-- rollback;
-- troubleshooting;
-- latency response;
-- error-rate response;
-- drift response;
-- infrastructure cleanup.
-
-### ADR.md
-
-Містить architectural decisions:
-
-- deployment strategy;
-- trade-offs;
-- alternatives;
-- decisions щодо production architecture.
-
-## 19. Deployment from scratch
-
-Фінальна система повинна бути відтворюваною з clean state.
-
-Основний принцип:
+Основний promotion script:
 
 ```text
-Terraform
-   │
-   ▼
-AWS infrastructure
-   │
-   ▼
+final/promote_model.py
+```
+
+Audit events мають JSON-формат та призначені для збору logging infrastructure і подальшого аналізу через Loki.
+
+### Model artifact integrity
+
+Для кожної model version генерується SHA256 checksum.
+
+Checksum:
+
+```text
+training artifact
+      ↓
+SHA256
+      ↓
+MLflow model version metadata
+```
+
+Перед завантаженням production-моделі inference service повторно обчислює checksum.
+
+Якщо фактичний checksum не відповідає значенню, збереженому в MLflow Model Registry, модель не завантажується.
+
+### Kubernetes RBAC
+
+RBAC configuration знаходиться у:
+
+```text
+rbac/rbac.yaml
+```
+
+Реалізовані ролі:
+
+```text
+mlops-engineer
+viewer
+```
+
+`mlops-engineer` має:
+
+- повний доступ до `staging`;
+- read-only доступ до `production`.
+
+`viewer` має read-only доступ до `staging` та `production`.
+
+### Security hardening
+
+Production inference workload використовує:
+
+- non-root container;
+- RuntimeDefault seccomp profile;
+- `allowPrivilegeEscalation: false`;
+- dropped Linux capabilities;
+- read-only root filesystem;
+- dedicated ServiceAccount;
+- disabled automatic ServiceAccount token mounting;
+- NetworkPolicy;
+- ResourceQuota;
+- Pydantic input validation;
+- application-level rate limiting.
+
+### Threat model
+
+Threat model знаходиться у:
+
+```text
+security/THREAT_MODEL.md
+```
+
+Документ описує основні загрози:
+
+- malicious input;
+- API abuse;
+- unauthorized Kubernetes access;
+- model artifact tampering;
+- unsafe model promotion;
+- inference container compromise;
+- недостатню traceability model lifecycle.
+
+Для кожної загрози описані відповідні security controls.
+
+## 25. Bootstrap and GitOps deployment
+
+Для AWS/EKS deployment передбачається поетапний bootstrap:
+
+```text
+Phase 1
+VPC
+  ↓
+Phase 2
 EKS
-   │
-   ▼
+  ↓
+Phase 3
 ArgoCD
-   │
-   ▼
-MLOps services
-   │
-   ▼
-Inference + Monitoring
+  ↓
+Phase 4
+MLflow / PostgreSQL / MinIO / Prometheus / Grafana / PushGateway / Loki
+  ↓
+Phase 5
+Inference deployment
+  ↓
+Phase 6
+Model promotion
 ```
 
-Точний порядок bootstrap та verification commands буде наведений після завершення infrastructure integration.
+Після bootstrap Kubernetes application deployments виконуються через ArgoCD із Git repository.
 
-## 20. Rollback
+Ручні `kubectl apply` та `helm install` не використовуються як основний deployment mechanism.
 
-Rollback повинен виконуватися однією documented action:
+## 26. AWS deployment limitation
+
+Фінальна AWS verification не була завершена через закриття AWS account після вичерпання доступних Free Tier credits.
+
+Через відсутність доступу до EKS неможливо повторно виконати:
+
+- live ArgoCD synchronization;
+- production inference verification;
+- live Grafana/Loki verification;
+- final Blue-Green switch;
+- фінальний `terraform destroy`.
+
+Код інфраструктури, Kubernetes manifests, MLflow workflow, security controls, monitoring configuration та documentation збережені у Git repository.
+
+Локальні перевірки YAML, JSON та Python syntax успішно виконані.
+
+Наявні screenshots з попередніх етапів використовуються як evidence для раніше перевірених компонентів.
+
+## 27. Submission artifacts
+
+Фінальний submission включає:
 
 ```text
-Production model
-      │
-      ▼
-Previous stable version
+Git repository
+├── README.md
+├── RUNBOOK.md
+├── ADR.md
+├── security/THREAT_MODEL.md
+├── Terraform
+├── Kubernetes manifests
+├── Helm configuration
+├── ArgoCD Applications
+├── MLflow training and promotion workflow
+├── FastAPI inference service
+├── Monitoring configuration
+└── Screenshots
 ```
 
-Rollback може бути реалізований через:
-
-- Git commit;
-- model version change;
-- deployment rollback;
-
-залежно від обраної deployment strategy.
-
-## 21. Cost management
-
-AWS resources використовуються лише на час роботи та демонстрації проєкту.
-
-Після завершення перевірок production infrastructure повинна бути видалена:
-
-```bash
-terraform destroy
-```
-
-Перед cleanup необхідно переконатися, що всі необхідні screenshots та artifacts для submission збережені.
-
-## 22. Definition of Done
-
-Фінальний проєкт вважається завершеним, якщо:
-
-- [ ] infrastructure створюється через Terraform;
-- [ ] EKS cluster працює;
-- [ ] необхідні namespaces створені;
-- [ ] ArgoCD працює;
-- [ ] MLflow працює;
-- [ ] Model Registry працює;
-- [ ] training створює нову model version;
-- [ ] model переходить у Staging;
-- [ ] production promotion працює;
-- [ ] deployment strategy працює;
-- [ ] rollback працює;
-- [ ] FastAPI inference працює;
-- [ ] input validation працює;
-- [ ] rate limiting реалізований;
-- [ ] Kubernetes RBAC налаштований;
-- [ ] model artifacts immutable;
-- [ ] checksum validation реалізована;
-- [ ] audit logging працює;
-- [ ] Prometheus збирає metrics;
-- [ ] Grafana dashboard працює;
-- [ ] Loki отримує inference logs;
-- [ ] model/data drift monitoring реалізований або задокументований відповідно до обраного scope;
-- [ ] README.md завершений;
-- [ ] RUNBOOK.md завершений;
-- [ ] ADR.md завершений;
-- [ ] secrets відсутні в Git repository;
-- [ ] фінальний `terraform destroy` успішний.
-
-## 23. Project status
-
-Фінальний проєкт розвивається на окремій Git-гілці:
+Для передачі проєкту також підготовлений архів:
 
 ```text
-final-project
+eks-vpc-argocd-final.zip
 ```
 
-Гілка базується на завершеному стані попередніх домашніх завдань.
-
-Попередня реалізація ДЗ1–ДЗ10 використовується як foundation та поступово інтегрується у production-oriented MLOps platform.
+До архіву не включаються Terraform state files, `.terraform` directories, plan files та локальні Python cache files.

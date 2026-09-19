@@ -18,18 +18,39 @@ spec:
         app: inference
         color: blue
     spec:
+      serviceAccountName: inference
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: inference
-          image: 650830975789.dkr.ecr.eu-north-1.amazonaws.com/mlops-inference:v1
+          image: mlops-inference:final
           imagePullPolicy: IfNotPresent
+
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
 
           ports:
             - name: http
               containerPort: 8000
 
           env:
-            - name: MODEL_SHA256
-              value: "446577ee7d7fb0eced219e8b4c4e3d130ba93206258a9041fa8e9e2ddc642abc"
+            - name: MLFLOW_TRACKING_URI
+              value: "http://mlflow.mlflow.svc.cluster.local:5000"
+            - name: MODEL_NAME
+              value: "iris-logistic-regression"
+            - name: MODEL_ALIAS
+              value: "production"
 
           readinessProbe:
             httpGet:
@@ -52,3 +73,7 @@ spec:
             limits:
               cpu: "1"
               memory: 2Gi
+
+      volumes:
+        - name: tmp
+          emptyDir: {}

@@ -3,6 +3,6 @@ terraform {
     bucket  = "mlops-tfstate-natala-2026"
     key     = "eks/terraform.tfstate"
     region  = "eu-north-1"
-    profile = "default"
+    shared_credentials_files = ["~/.aws/credentials"]
   }
 }

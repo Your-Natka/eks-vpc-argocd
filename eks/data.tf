@@ -5,6 +5,6 @@ data "terraform_remote_state" "vpc" {
     bucket  = "mlops-tfstate-natala-2026"
     key     = "vpc/terraform.tfstate"
     region  = "eu-north-1"
-    profile = "default"
+    profile = "NatkaMLOps"
   }
 }
